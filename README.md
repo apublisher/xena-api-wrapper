@@ -160,3 +160,18 @@ detail_from_row = wrapper.ledger_group_data_detail.get_by_summary_group(
 - endpoint: `/Transaction/LedgerGroupDataDetail`
 - `show_deactivated=True` by default
 - `fiscal_period_id` optional; when omitted it is auto-resolved from `date_from`
+
+## Practical account list helpers
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# Norwegian chart of accounts convenience ranges.
+all_accounts = wrapper.get_all_accounts("2025-01-01", "2025-12-31")      # 1000-9999
+balance_accounts = wrapper.get_balance_accounts("2025-01-01", "2025-12-31")  # 1000-2999
+result_accounts = wrapper.get_result_accounts("2025-01-01", "2025-12-31")    # 3000-9999
+```
+
+These helpers orchestrate summary + detail calls and return deduplicated account rows sorted by `AccountNumber`.

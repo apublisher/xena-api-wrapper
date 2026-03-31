@@ -111,5 +111,24 @@ class XenaApiWrapper:
                 self._client,
                 self.fiscal_id,
                 self.fiscal_period,
+                self.ledger_group_data,
             )
         return self._ledger_group_data_detail_workflow
+
+    def get_all_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
+        return self.ledger_group_data_detail.get_all_accounts(
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    def get_balance_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
+        return self.ledger_group_data_detail.get_balance_accounts(
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    def get_result_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
+        return self.ledger_group_data_detail.get_result_accounts(
+            date_from=date_from,
+            date_to=date_to,
+        )

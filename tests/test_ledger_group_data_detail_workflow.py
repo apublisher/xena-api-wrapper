@@ -58,15 +58,62 @@ class _FakeFiscalPeriodWorkflow:
         return self.period_id
 
 
+class _FakeLedgerGroupDataWorkflow:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def get_all_groups(
+        self,
+        *,
+        fiscal_period_id: int | None = None,
+        date_from: Any,
+        date_to: Any,
+        page: int = 0,
+        page_size: int = 100,
+        force_no_paging: bool = True,
+        show_deactivated: bool = False,
+        ledger_id: int | None = None,
+        include_simulated_bookkeeping: bool = False,
+    ) -> dict[str, Any]:
+        _ = page
+        _ = page_size
+        _ = force_no_paging
+        _ = show_deactivated
+        _ = ledger_id
+        _ = include_simulated_bookkeeping
+        self.calls.append(
+            {
+                "fiscal_period_id": fiscal_period_id,
+                "date_from": date_from,
+                "date_to": date_to,
+            }
+        )
+        return {
+            "Xena_Domain_Income_Accounts": {
+                "Entities": [
+                    {"Group": "Xena_Domain_Income_Accounts_Administration_Costs"},
+                    {"Group": "Xena_Domain_Income_Accounts_Net_Turn_Over"},
+                ]
+            },
+            "Xena_Domain_Asset_Accounts": {
+                "Entities": [
+                    {"Group": "Xena_Domain_Asset_Accounts_Tangible_Fixed_Asset"},
+                ]
+            },
+        }
+
+
 class LedgerGroupDataDetailWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fake_finance = _FakeFinance()
         self.fake_fiscal_period = _FakeFiscalPeriodWorkflow()
+        self.fake_ledger_group_data = _FakeLedgerGroupDataWorkflow()
         client = SimpleNamespace(finance=self.fake_finance)
         self.workflow = LedgerGroupDataDetailWorkflow(
             client,
             "104779",
             cast(Any, self.fake_fiscal_period),
+            cast(Any, self.fake_ledger_group_data),
         )
 
     def test_get_by_ledger_account_uses_provided_fiscal_period(self) -> None:
@@ -119,6 +166,67 @@ class LedgerGroupDataDetailWorkflowTests(unittest.TestCase):
                 date_from="2025-01-01",
                 date_to="2025-01-31",
             )
+
+    def test_get_all_accounts_aggregates_and_filters_1000_to_9999(self) -> None:
+        self.fake_finance.api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail = cast(  # type: ignore[attr-defined]
+            Any,
+            lambda **kwargs: {
+                "Count": 3,
+                "Entities": [
+                    {"AccountNumber": 950, "Description": "Outside low range"},
+                    {"AccountNumber": 1280, "Description": "Balance"},
+                    {"AccountNumber": 6420, "Description": "Result"},
+                ],
+            },
+        )
+
+        accounts = self.workflow.get_all_accounts(
+            date_from="2025-01-01",
+            date_to="2025-01-31",
+        )
+
+        self.assertEqual([a["AccountNumber"] for a in accounts], [1280, 6420])
+
+    def test_get_balance_accounts_filters_1000_to_2999(self) -> None:
+        self.fake_finance.api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail = cast(  # type: ignore[attr-defined]
+            Any,
+            lambda **kwargs: {
+                "Count": 3,
+                "Entities": [
+                    {"AccountNumber": 1280, "Description": "Balance"},
+                    {"AccountNumber": 2999, "Description": "Balance edge"},
+                    {"AccountNumber": 3000, "Description": "Result edge"},
+                ],
+            },
+        )
+
+        accounts = self.workflow.get_balance_accounts(
+            date_from="2025-01-01",
+            date_to="2025-01-31",
+        )
+
+        self.assertEqual([a["AccountNumber"] for a in accounts], [1280, 2999])
+
+    def test_get_result_accounts_filters_3000_to_9999(self) -> None:
+        self.fake_finance.api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail = cast(  # type: ignore[attr-defined]
+            Any,
+            lambda **kwargs: {
+                "Count": 4,
+                "Entities": [
+                    {"AccountNumber": 2999, "Description": "Balance edge"},
+                    {"AccountNumber": 3000, "Description": "Result edge"},
+                    {"AccountNumber": 6420, "Description": "Result"},
+                    {"AccountNumber": 10000, "Description": "Outside high range"},
+                ],
+            },
+        )
+
+        accounts = self.workflow.get_result_accounts(
+            date_from="2025-01-01",
+            date_to="2025-01-31",
+        )
+
+        self.assertEqual([a["AccountNumber"] for a in accounts], [3000, 6420])
 
 
 if __name__ == "__main__":
