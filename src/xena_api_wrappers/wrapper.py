@@ -5,7 +5,7 @@ from typing import Any
 
 from .core import ClientFactory, DateInput, default_client_factory
 from .credentials import XenaCredentials
-from .workflows import BalanceWorkflow, FiscalPeriodWorkflow
+from .workflows import BalanceWorkflow, FiscalPeriodWorkflow, LedgerGroupWorkflow
 
 
 
@@ -30,6 +30,7 @@ class XenaApiWrapper:
         self._client = factory(self._credentials.api_key, self._credentials.fiscal_id)
         self._balance_workflow: BalanceWorkflow | None = None
         self._fiscal_period_workflow: FiscalPeriodWorkflow | None = None
+        self._ledger_group_workflow: LedgerGroupWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -86,3 +87,12 @@ class XenaApiWrapper:
     def get_fiscal_period_id_by_date(self, selected_date: DateInput) -> int:
         # Backward-compatible facade method.
         return self.fiscal_period.get_id_by_date(selected_date)
+
+    @property
+    def ledger_group(self) -> LedgerGroupWorkflow:
+        if self._ledger_group_workflow is None:
+            self._ledger_group_workflow = LedgerGroupWorkflow(self._client, self.fiscal_id)
+        return self._ledger_group_workflow
+
+    def get_ledger_groups(self) -> Any:
+        return self.ledger_group.get_all()

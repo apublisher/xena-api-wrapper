@@ -67,3 +67,20 @@ period_id = wrapper.fiscal_period.get_id_by_date("15.01.2026")
 # Convenience lookup by year description
 period_2026_id = wrapper.fiscal_period.get_id_by_year("2026")
 ```
+
+## Ledger group usage
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# Full raw payload from /LedgerTag/LedgerGroup
+all_groups = wrapper.ledger_group.get_all()
+
+# Value by localized text
+income_value = wrapper.ledger_group.get_value_by_text("Resultatregnskap")
+
+# Entity by value
+asset_group = wrapper.ledger_group.get_by_value("Xena_Domain_Asset_Accounts")
+```
