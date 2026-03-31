@@ -1,4 +1,4 @@
-from .finance import BalanceWorkflow, LedgerGroupDataError, LedgerGroupDataWorkflow
+from .finance import LedgerGroupDataError, LedgerGroupDataWorkflow
 from .utils import (
 	FiscalPeriodAmbiguousError,
 	FiscalPeriodError,
@@ -11,7 +11,6 @@ from .utils import (
 )
 
 __all__ = [
-	"BalanceWorkflow",
 	"LedgerGroupDataError",
 	"LedgerGroupDataWorkflow",
 	"FiscalPeriodAmbiguousError",

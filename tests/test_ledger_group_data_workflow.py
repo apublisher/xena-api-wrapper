@@ -70,15 +70,27 @@ class _FakeLedgerGroupWorkflow:
         raise ValueError("not found")
 
 
+class _FakeFiscalPeriodWorkflow:
+    def __init__(self, period_id: int = 2586516686) -> None:
+        self.period_id = period_id
+        self.calls: list[Any] = []
+
+    def get_id_by_date(self, selected_date: Any) -> int:
+        self.calls.append(selected_date)
+        return self.period_id
+
+
 class LedgerGroupDataWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fake_finance = _FakeFinance()
         self.fake_ledger_group = _FakeLedgerGroupWorkflow()
+        self.fake_fiscal_period = _FakeFiscalPeriodWorkflow()
         client = SimpleNamespace(finance=self.fake_finance)
         self.workflow = LedgerGroupDataWorkflow(
             client,
             "104779",
             cast(Any, self.fake_ledger_group),
+            cast(Any, self.fake_fiscal_period),
         )
 
     def test_get_by_ledger_group_accepts_value(self) -> None:
@@ -132,6 +144,29 @@ class LedgerGroupDataWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(self.fake_ledger_group.entities_calls, 1)
+
+    def test_get_by_ledger_group_resolves_fiscal_period_from_date_from(self) -> None:
+        self.workflow.get_by_ledger_group(
+            "Xena_Domain_Income_Accounts",
+            date_from="2025-01-01",
+            date_to="2025-01-31",
+        )
+
+        self.assertEqual(self.fake_fiscal_period.calls, ["2025-01-01"])
+        self.assertEqual(self.fake_finance.calls[-1]["fiscal_period_id"], 2586516686)
+
+    def test_get_balance_sheet_aliases_get_all_groups(self) -> None:
+        result = self.workflow.get_balance_sheet(
+            date_from="2025-01-01",
+            date_to="2025-01-31",
+        )
+
+        self.assertEqual(set(result.keys()), {
+            "Xena_Domain_Income_Accounts",
+            "Xena_Domain_Asset_Accounts",
+            "Xena_Domain_Liability_Accounts",
+        })
+        self.assertEqual(self.fake_fiscal_period.calls, ["2025-01-01"])
 
 
 if __name__ == "__main__":

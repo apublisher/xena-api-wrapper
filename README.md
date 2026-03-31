@@ -34,7 +34,10 @@ Task-oriented Python wrappers built on top of `xena-client`.
 from xena_api_wrappers import XenaApiWrapper
 
 wrapper = XenaApiWrapper(api_key="...", fiscal_id="...")
-report = wrapper.get_balance_data("2026-01-01", "2026-01-31")
+report = wrapper.ledger_group_data.get_balance_sheet(
+	date_from="2026-01-01",
+	date_to="2026-01-31",
+)
 ```
 
 ## Optional dotenv usage
@@ -84,3 +87,38 @@ income_value = wrapper.ledger_group.get_value_by_text("Resultatregnskap")
 # Entity by value
 asset_group = wrapper.ledger_group.get_by_value("Xena_Domain_Asset_Accounts")
 ```
+
+## Ledger group data usage
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# Explicit mode: pass fiscal_period_id yourself.
+period_id = wrapper.fiscal_period.get_id_by_date("2025-01-15")
+income_january = wrapper.ledger_group_data.get_by_ledger_group(
+	"Xena_Domain_Income_Accounts",
+	fiscal_period_id=period_id,
+	date_from="2025-01-01",
+	date_to="2025-01-31",
+)
+
+# Convenience mode: fiscal_period_id is auto-resolved from date_from.
+income_january_auto = wrapper.ledger_group_data.get_by_ledger_group(
+	"Resultatregnskap",
+	date_from="01.01.2025",
+	date_to="31.01.2025",
+)
+
+# High-level helper for all three balance report groups in one call.
+balance_sheet = wrapper.ledger_group_data.get_balance_sheet(
+	date_from="2025-01-01",
+	date_to="2025-01-31",
+)
+```
+
+`get_balance_sheet(...)` returns a dict keyed by:
+- `Xena_Domain_Income_Accounts`
+- `Xena_Domain_Asset_Accounts`
+- `Xena_Domain_Liability_Accounts`
