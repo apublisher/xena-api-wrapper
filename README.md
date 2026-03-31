@@ -208,3 +208,17 @@ entries = wrapper.get_entries_by_account(
 ```
 
 This calls `/LedgerTag/{id}/LedgerPost` after resolving account `1920` to its ledger-tag id.
+
+For voucher/transaction level details:
+
+```python
+# 1) Voucher -> transaction rows
+transactions = wrapper.get_transactions_by_voucher(3020754351)
+
+# 2) Transaction -> all post types (always returned)
+details = wrapper.get_posting_details(3020754631)
+# details contains: ledger_post, partner_post, article_post
+
+# 3) Convenience: voucher -> transaction ids -> full details
+details_from_voucher = wrapper.get_posting_details_by_voucher(3020754351)
+```

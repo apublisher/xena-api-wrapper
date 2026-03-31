@@ -51,6 +51,99 @@ class LedgerPostWorkflow:
             list_options_force_no_paging=force_no_paging,
         )
 
+    def get_transactions_by_voucher(
+        self,
+        voucher_id: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self._client.finance.api_voucher__get_transactions_by_voucher_get__api__fiscal_fiscal_id__voucher_id__transaction(
+            id=voucher_id,
+            fiscal_id=self._fiscal_id,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+
+    def get_posting_details(
+        self,
+        transaction_id: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> dict[str, Any]:
+        ledger_post = self._client.finance.api_transaction__get_ledger_post_by_transaction_get__api__fiscal_fiscal_id__transaction_id__ledger_post(
+            id=transaction_id,
+            fiscal_id=self._fiscal_id,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+        partner_post = self._client.finance.api_transaction__get_partner_post_by_transaction_get__api__fiscal_fiscal_id__transaction_id__partner_post(
+            id=transaction_id,
+            fiscal_id=self._fiscal_id,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+        article_post = self._client.finance.api_transaction__get_article_post_by_transaction_get__api__fiscal_fiscal_id__transaction_id__article_post(
+            id=transaction_id,
+            fiscal_id=self._fiscal_id,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+
+        return {
+            "transaction_id": transaction_id,
+            "ledger_post": ledger_post,
+            "partner_post": partner_post,
+            "article_post": article_post,
+        }
+
+    def get_posting_details_by_voucher(
+        self,
+        voucher_id: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> list[dict[str, Any]]:
+        transactions = self.get_transactions_by_voucher(
+            voucher_id,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+        entities = self._extract_entities(transactions)
+
+        details: list[dict[str, Any]] = []
+        for transaction in entities:
+            transaction_id = transaction.get("Id")
+            if isinstance(transaction_id, int):
+                details.append(
+                    self.get_posting_details(
+                        transaction_id,
+                        force_no_paging=force_no_paging,
+                        page=page,
+                        page_size=page_size,
+                        show_deactivated=show_deactivated,
+                    )
+                )
+
+        return details
+
     def _resolve_ledger_tag_id(self, account: int | str) -> int:
         # If caller passes account number (int or numeric string), resolve via ledger account map.
         if isinstance(account, int):
@@ -91,3 +184,17 @@ class LedgerPostWorkflow:
         if self._ledger_account_workflow is None:
             self._ledger_account_workflow = LedgerAccountWorkflow(self._client, self._fiscal_id)
         return self._ledger_account_workflow
+
+    @staticmethod
+    def _extract_entities(raw_payload: Any) -> list[dict[str, Any]]:
+        if isinstance(raw_payload, dict):
+            entities = raw_payload.get("Entities")
+            if isinstance(entities, list):
+                return [e for e in entities if isinstance(e, dict)]
+        if hasattr(raw_payload, "to_dict"):
+            converted = raw_payload.to_dict()
+            if isinstance(converted, dict):
+                entities = converted.get("Entities")
+                if isinstance(entities, list):
+                    return [e for e in entities if isinstance(e, dict)]
+        return []

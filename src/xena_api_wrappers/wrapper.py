@@ -188,3 +188,54 @@ class XenaApiWrapper:
             show_reconciled=show_reconciled,
             reverse_date_sort=reverse_date_sort,
         )
+
+    def get_transactions_by_voucher(
+        self,
+        voucher_id: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.ledger_post.get_transactions_by_voucher(
+            voucher_id,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_posting_details(
+        self,
+        transaction_id: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> dict[str, Any]:
+        return self.ledger_post.get_posting_details(
+            transaction_id,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_posting_details_by_voucher(
+        self,
+        voucher_id: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.ledger_post.get_posting_details_by_voucher(
+            voucher_id,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
