@@ -168,10 +168,21 @@ from xena_api_wrappers import XenaApiWrapper
 
 wrapper = XenaApiWrapper.from_env(load_dotenv=True)
 
-# Norwegian chart of accounts convenience ranges.
-all_accounts = wrapper.get_all_accounts("2025-01-01", "2025-12-31")      # 1000-9999
-balance_accounts = wrapper.get_balance_accounts("2025-01-01", "2025-12-31")  # 1000-2999
-result_accounts = wrapper.get_result_accounts("2025-01-01", "2025-12-31")    # 3000-9999
+# Ledger account master ranges from /LedgerAccount.
+all_accounts = wrapper.get_all_accounts()          # 1000-9999
+balance_accounts = wrapper.get_balance_accounts()  # 1000-2999
+result_accounts = wrapper.get_result_accounts()    # 3000-9999
+
+# Account id lookup by account number.
+account_1920_id = wrapper.ledger_account.get_id_by_account_number(1920)
 ```
 
-These helpers orchestrate summary + detail calls and return deduplicated account rows sorted by `AccountNumber`.
+These helpers read account master data and return rows sorted by `AccountNumber`.
+
+If you want date-ranged report account rows (from LedgerGroupDataDetail), use:
+
+```python
+report_accounts = wrapper.get_all_report_accounts("2025-01-01", "2025-12-31")
+report_balance_accounts = wrapper.get_balance_report_accounts("2025-01-01", "2025-12-31")
+report_result_accounts = wrapper.get_result_report_accounts("2025-01-01", "2025-12-31")
+```

@@ -7,6 +7,7 @@ from .core import ClientFactory, DateInput, default_client_factory
 from .credentials import XenaCredentials
 from .workflows import (
     FiscalPeriodWorkflow,
+    LedgerAccountWorkflow,
     LedgerGroupDataWorkflow,
     LedgerGroupDataDetailWorkflow,
     LedgerGroupWorkflow,
@@ -34,6 +35,7 @@ class XenaApiWrapper:
         factory = client_factory or default_client_factory
         self._client = factory(self._credentials.api_key, self._credentials.fiscal_id)
         self._fiscal_period_workflow: FiscalPeriodWorkflow | None = None
+        self._ledger_account_workflow: LedgerAccountWorkflow | None = None
         self._ledger_group_workflow: LedgerGroupWorkflow | None = None
         self._ledger_group_data_workflow: LedgerGroupDataWorkflow | None = None
         self._ledger_group_data_detail_workflow: LedgerGroupDataDetailWorkflow | None = None
@@ -85,6 +87,12 @@ class XenaApiWrapper:
         return self.fiscal_period.get_id_by_date(selected_date)
 
     @property
+    def ledger_account(self) -> LedgerAccountWorkflow:
+        if self._ledger_account_workflow is None:
+            self._ledger_account_workflow = LedgerAccountWorkflow(self._client, self.fiscal_id)
+        return self._ledger_account_workflow
+
+    @property
     def ledger_group(self) -> LedgerGroupWorkflow:
         if self._ledger_group_workflow is None:
             self._ledger_group_workflow = LedgerGroupWorkflow(self._client, self.fiscal_id)
@@ -115,19 +123,28 @@ class XenaApiWrapper:
             )
         return self._ledger_group_data_detail_workflow
 
-    def get_all_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
+    def get_all_accounts(self) -> list[dict[str, Any]]:
+        return self.ledger_account.get_all_accounts()
+
+    def get_balance_accounts(self) -> list[dict[str, Any]]:
+        return self.ledger_account.get_balance_accounts()
+
+    def get_result_accounts(self) -> list[dict[str, Any]]:
+        return self.ledger_account.get_result_accounts()
+
+    def get_all_report_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
         return self.ledger_group_data_detail.get_all_accounts(
             date_from=date_from,
             date_to=date_to,
         )
 
-    def get_balance_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
+    def get_balance_report_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
         return self.ledger_group_data_detail.get_balance_accounts(
             date_from=date_from,
             date_to=date_to,
         )
 
-    def get_result_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
+    def get_result_report_accounts(self, date_from: DateInput, date_to: DateInput) -> list[dict[str, Any]]:
         return self.ledger_group_data_detail.get_result_accounts(
             date_from=date_from,
             date_to=date_to,
