@@ -8,6 +8,7 @@ from .credentials import XenaCredentials
 from .workflows import (
     FiscalPeriodWorkflow,
     LedgerGroupDataWorkflow,
+    LedgerGroupDataDetailWorkflow,
     LedgerGroupWorkflow,
 )
 
@@ -35,6 +36,7 @@ class XenaApiWrapper:
         self._fiscal_period_workflow: FiscalPeriodWorkflow | None = None
         self._ledger_group_workflow: LedgerGroupWorkflow | None = None
         self._ledger_group_data_workflow: LedgerGroupDataWorkflow | None = None
+        self._ledger_group_data_detail_workflow: LedgerGroupDataDetailWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -98,5 +100,16 @@ class XenaApiWrapper:
                 self._client,
                 self.fiscal_id,
                 self.ledger_group,
+                self.fiscal_period,
             )
         return self._ledger_group_data_workflow
+
+    @property
+    def ledger_group_data_detail(self) -> LedgerGroupDataDetailWorkflow:
+        if self._ledger_group_data_detail_workflow is None:
+            self._ledger_group_data_detail_workflow = LedgerGroupDataDetailWorkflow(
+                self._client,
+                self.fiscal_id,
+                self.fiscal_period,
+            )
+        return self._ledger_group_data_detail_workflow

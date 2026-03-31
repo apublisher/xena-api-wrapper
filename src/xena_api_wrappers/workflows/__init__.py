@@ -1,4 +1,9 @@
-from .finance import LedgerGroupDataError, LedgerGroupDataWorkflow
+from .finance import (
+	LedgerGroupDataDetailError,
+	LedgerGroupDataDetailWorkflow,
+	LedgerGroupDataError,
+	LedgerGroupDataWorkflow,
+)
 from .utils import (
 	FiscalPeriodAmbiguousError,
 	FiscalPeriodError,
@@ -13,6 +18,8 @@ from .utils import (
 __all__ = [
 	"LedgerGroupDataError",
 	"LedgerGroupDataWorkflow",
+	"LedgerGroupDataDetailError",
+	"LedgerGroupDataDetailWorkflow",
 	"FiscalPeriodAmbiguousError",
 	"FiscalPeriodError",
 	"FiscalPeriodNotFoundError",

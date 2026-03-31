@@ -122,3 +122,41 @@ balance_sheet = wrapper.ledger_group_data.get_balance_sheet(
 - `Xena_Domain_Income_Accounts`
 - `Xena_Domain_Asset_Accounts`
 - `Xena_Domain_Liability_Accounts`
+
+## Ledger group detail usage (account level)
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# Step 1: Fetch summary rows for a top-level ledger group.
+summary = wrapper.ledger_group_data.get_by_ledger_group(
+	"Xena_Domain_Income_Accounts",
+	date_from="2025-01-01",
+	date_to="2025-12-31",
+)
+
+# Step 2: Pick one summary row Group value (example: Administration Costs).
+ledger_account = "Xena_Domain_Income_Accounts_Administration_Costs"
+
+# Step 3: Fetch account-level detail rows for that summary group.
+detail = wrapper.ledger_group_data_detail.get_by_ledger_account(
+	ledger_account,
+	date_from="2025-01-01",
+	date_to="2025-12-31",
+)
+
+# Or pass a summary row directly.
+first_row = summary["Entities"][0]
+detail_from_row = wrapper.ledger_group_data_detail.get_by_summary_group(
+	first_row,
+	date_from="2025-01-01",
+	date_to="2025-12-31",
+)
+```
+
+`ledger_group_data_detail` follows observed UI behavior:
+- endpoint: `/Transaction/LedgerGroupDataDetail`
+- `show_deactivated=True` by default
+- `fiscal_period_id` optional; when omitted it is auto-resolved from `date_from`
