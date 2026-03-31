@@ -186,3 +186,25 @@ report_accounts = wrapper.get_all_report_accounts("2025-01-01", "2025-12-31")
 report_balance_accounts = wrapper.get_balance_report_accounts("2025-01-01", "2025-12-31")
 report_result_accounts = wrapper.get_result_report_accounts("2025-01-01", "2025-12-31")
 ```
+
+## Ledger post usage (entries by account)
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# Account number or account-id string is accepted.
+entries = wrapper.get_entries_by_account(
+	"1920",
+	"2025-01-01",
+	"2025-12-31",
+	include_running_totals=True,
+	force_no_paging=False,
+	page=0,
+	page_size=100,
+	show_deactivated=False,
+)
+```
+
+This calls `/LedgerTag/{id}/LedgerPost` after resolving account `1920` to its ledger-tag id.

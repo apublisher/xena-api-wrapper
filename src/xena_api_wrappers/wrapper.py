@@ -11,6 +11,7 @@ from .workflows import (
     LedgerGroupDataWorkflow,
     LedgerGroupDataDetailWorkflow,
     LedgerGroupWorkflow,
+    LedgerPostWorkflow,
 )
 
 
@@ -39,6 +40,7 @@ class XenaApiWrapper:
         self._ledger_group_workflow: LedgerGroupWorkflow | None = None
         self._ledger_group_data_workflow: LedgerGroupDataWorkflow | None = None
         self._ledger_group_data_detail_workflow: LedgerGroupDataDetailWorkflow | None = None
+        self._ledger_post_workflow: LedgerPostWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -123,6 +125,16 @@ class XenaApiWrapper:
             )
         return self._ledger_group_data_detail_workflow
 
+    @property
+    def ledger_post(self) -> LedgerPostWorkflow:
+        if self._ledger_post_workflow is None:
+            self._ledger_post_workflow = LedgerPostWorkflow(
+                self._client,
+                self.fiscal_id,
+                self.ledger_account,
+            )
+        return self._ledger_post_workflow
+
     def get_all_accounts(self) -> list[dict[str, Any]]:
         return self.ledger_account.get_all_accounts()
 
@@ -148,4 +160,31 @@ class XenaApiWrapper:
         return self.ledger_group_data_detail.get_result_accounts(
             date_from=date_from,
             date_to=date_to,
+        )
+
+    def get_entries_by_account(
+        self,
+        account: int | str,
+        date_from: DateInput,
+        date_to: DateInput,
+        *,
+        include_running_totals: bool = True,
+        force_no_paging: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+        show_reconciled: bool | None = None,
+        reverse_date_sort: bool | None = None,
+    ) -> Any:
+        return self.ledger_post.get_entries_by_account(
+            account,
+            date_from,
+            date_to,
+            include_running_totals=include_running_totals,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+            show_reconciled=show_reconciled,
+            reverse_date_sort=reverse_date_sort,
         )
