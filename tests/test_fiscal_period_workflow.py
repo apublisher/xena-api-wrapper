@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 
-from xena_api_wrappers.workflows.fiscal_period import (
+from xena_api_wrappers.workflows.utils.fiscal_period import (
     FiscalPeriodAmbiguousError,
     FiscalPeriodNotFoundError,
     FiscalPeriodWorkflow,
