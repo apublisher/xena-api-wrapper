@@ -7,6 +7,8 @@ from .finance import (
 	LedgerPostWorkflow,
 	TransactionError,
 	TransactionWorkflow,
+	VoucherAmbiguousError,
+	VoucherNotFoundError,
 )
 from .utils import (
 	FiscalPeriodAmbiguousError,
@@ -32,6 +34,8 @@ __all__ = [
 	"LedgerPostWorkflow",
 	"TransactionError",
 	"TransactionWorkflow",
+	"VoucherAmbiguousError",
+	"VoucherNotFoundError",
 	"FiscalPeriodAmbiguousError",
 	"FiscalPeriodError",
 	"FiscalPeriodNotFoundError",

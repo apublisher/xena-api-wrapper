@@ -212,8 +212,15 @@ This calls `/LedgerTag/{id}/LedgerPost` after resolving account `1920` to its le
 For voucher/transaction level details:
 
 ```python
+# Note: get_transactions_by_voucher(...) expects voucher id, not voucher number.
+
 # 1) Voucher -> transaction rows
 transactions = wrapper.transaction.get_transactions_by_voucher(3020754351)
+
+# If you have voucher number (for example 15316), resolve it first:
+voucher = wrapper.transaction.get_voucher_by_number(15316)
+voucher_id = wrapper.transaction.get_voucher_id_by_number(15316)
+transactions_by_number = wrapper.transaction.get_transactions_by_voucher_number(15316)
 
 # 2) Transaction -> all post types (always returned)
 details = wrapper.transaction.get_posting_details(3020754631)
@@ -221,6 +228,7 @@ details = wrapper.transaction.get_posting_details(3020754631)
 
 # 3) Convenience: voucher -> transaction ids -> full details
 details_from_voucher = wrapper.transaction.get_posting_details_by_voucher(3020754351)
+details_from_voucher_number = wrapper.transaction.get_posting_details_by_voucher_number(15316)
 ```
 
 Wrapper-level facade methods are still available for compatibility:

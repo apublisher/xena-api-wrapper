@@ -217,6 +217,29 @@ class XenaApiWrapper:
             show_deactivated=show_deactivated,
         )
 
+    def get_voucher_by_number(self, voucher_number: int) -> dict[str, Any]:
+        return self.transaction.get_voucher_by_number(voucher_number)
+
+    def get_voucher_id_by_number(self, voucher_number: int) -> int:
+        return self.transaction.get_voucher_id_by_number(voucher_number)
+
+    def get_transactions_by_voucher_number(
+        self,
+        voucher_number: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.transaction.get_transactions_by_voucher_number(
+            voucher_number,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
     def get_posting_details(
         self,
         transaction_id: int,
@@ -245,6 +268,23 @@ class XenaApiWrapper:
     ) -> list[dict[str, Any]]:
         return self.transaction.get_posting_details_by_voucher(
             voucher_id,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_posting_details_by_voucher_number(
+        self,
+        voucher_number: int,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.transaction.get_posting_details_by_voucher_number(
+            voucher_number,
             force_no_paging=force_no_paging,
             page=page,
             page_size=page_size,
