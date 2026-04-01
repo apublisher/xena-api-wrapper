@@ -403,7 +403,7 @@ Recommended usage pattern:
 3. Submit with `settle_partner_posts_safe(...)` only after review in high-risk automation flows.
 
 Live verified scenario:
-1. Partner account: `10008` (`MPS Bilskade Bergen AS`, partner id `2247873100`).
+1. Partner account: `*AccountNumber*` (`PartnerName`, partner id `2247873100`).
 2. Selected unsettled posts: `3020754398` (`-6693.75`) and `2900254804` (`6693.75`).
 3. Sum check: `0.00` (passes strict validation).
 4. Settlement date: newest selected post date (`payDate=20420`, `2025-11-28`).
