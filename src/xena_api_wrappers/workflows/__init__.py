@@ -10,6 +10,15 @@ from .finance import (
 	VoucherAmbiguousError,
 	VoucherNotFoundError,
 )
+from .partner import (
+	PartnerAddressDTO,
+	PartnerDTO,
+	PartnerError,
+	PartnerLedgerError,
+	PartnerLedgerWorkflow,
+	PartnerNotFoundError,
+	PartnerWorkflow,
+)
 from .utils import (
 	FiscalPeriodAmbiguousError,
 	FiscalPeriodError,
@@ -36,6 +45,13 @@ __all__ = [
 	"TransactionWorkflow",
 	"VoucherAmbiguousError",
 	"VoucherNotFoundError",
+	"PartnerAddressDTO",
+	"PartnerDTO",
+	"PartnerError",
+	"PartnerLedgerError",
+	"PartnerLedgerWorkflow",
+	"PartnerNotFoundError",
+	"PartnerWorkflow",
 	"FiscalPeriodAmbiguousError",
 	"FiscalPeriodError",
 	"FiscalPeriodNotFoundError",

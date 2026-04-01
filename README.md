@@ -235,3 +235,182 @@ Wrapper-level facade methods are still available for compatibility:
 - `wrapper.get_transactions_by_voucher(...)`
 - `wrapper.get_posting_details(...)`
 - `wrapper.get_posting_details_by_voucher(...)`
+
+## Partner usage
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# Raw partner list payload with filters.
+partners = wrapper.partner.get_all(
+	query_string="acme",
+	partner_context_type="Customer",
+	show_deactivated=False,
+	page=0,
+	page_size=100,
+)
+
+# Convenience context filters.
+customers = wrapper.partner.get_customers(query_string="acme")
+suppliers = wrapper.partner.get_suppliers()
+employees = wrapper.partner.get_employees()
+
+# Entities helper (returns parsed list from response payload).
+customer_entities = wrapper.partner.get_entities(partner_context_type="Customer")
+
+# Lookups.
+partner = wrapper.partner.get_by_id(123)
+partner_by_account = wrapper.partner.get_by_account_number(1500)
+context_types = wrapper.partner.get_context_types()
+```
+
+Wrapper-level facade methods are also available:
+- `wrapper.get_partners(...)`
+- `wrapper.get_partner_entities(...)`
+- `wrapper.get_customers(...)`
+- `wrapper.get_suppliers(...)`
+- `wrapper.get_employees(...)`
+- `wrapper.get_partner_context_types()`
+- `wrapper.get_partner_by_id(...)`
+- `wrapper.get_partner_by_account_number(...)`
+
+Create/update and context helpers:
+
+```python
+# Raw partner create / update
+created = wrapper.create_partner(
+	{
+		"ShortDescription": "API kundetest",
+		"Address": {"Name": "API kundetest", "Zip": "5258", "CountryName": "NO"},
+		"PartnerType": "xena_partnertype_company",
+	}
+)
+
+updated = wrapper.update_partner(created["Id"], {"ShortDescription": "API kundetest (oppdatert)"})
+
+# Add context to classify as customer/supplier
+customer_context = wrapper.add_partner_context(
+	created["Id"],
+	"ContextType_Customer",
+	invoice_email="apikunde@gj-system.no",
+)
+
+# One-call convenience creators
+customer = wrapper.create_customer(
+	name="API kundetest",
+	postal_number="5258",
+	street="Espelandsvegen 27",
+	email="apikunde@gj-system.no",
+)
+
+supplier = wrapper.create_supplier(
+	name="API leverandortest",
+	postal_number="5258",
+	email="apilev@gj-system.no",
+)
+```
+
+For stricter payload control, prefer `PartnerDTO` / `PartnerAddressDTO` with `wrapper.partner.create(...)` and `wrapper.partner.update(...)`.
+Raw dict payloads are still supported for full API coverage, but should only include fields accepted by Xena.
+
+Partner ledger read helpers:
+
+```python
+# Direct partner-post query (maps to Transaction/Partner/{partnerId}/PartnerPost)
+posts = wrapper.partner_ledger.get_posts(
+	2247873100,
+	context_type="customer",  # alias -> ContextType_Customer
+	fiscal_date_from="2025-01-01",
+	fiscal_date_to="2025-12-31",
+	is_settled=False,
+	post_type="invoice",  # alias -> PartnerPostType_CustomerInvoice
+	is_parked=None,
+	page=0,
+	page_size=30,
+	force_no_paging=False,
+)
+
+# Resolve fiscal period from year automatically.
+posts_2025 = wrapper.partner_ledger.get_posts_for_year(
+	2247873100,
+	2025,
+	context_type="ContextType_Customer",
+	post_type="PartnerPostType_CustomerPayment",
+)
+
+# Convenience facades are also available on wrapper.
+same_posts = wrapper.get_partner_posts(2247873100, context_type="ContextType_Customer")
+customer_posts = wrapper.get_customer_partner_posts(2247873100)
+supplier_posts = wrapper.get_supplier_partner_posts(2247873100)
+```
+
+Alias examples for `post_type`: `invoice`, `credit_note`, `payment`, `supplier_invoice`,
+`supplier_credit_note`, `supplier_payment`.
+
+Note: the current generated client does not expose a direct `fiscal_period_id` argument for this endpoint;
+use `fiscal_date_from`/`fiscal_date_to` or `get_posts_for_year(...)`.
+
+Strict safe settlement helper:
+
+```python
+# Build payload with strict validation before executing settlement.
+payload = wrapper.build_partner_settlement_payload_safe(
+	2247873100,
+	[3020754398, 2900254804],
+	pay_date="2025-12-19",
+)
+
+# Executes PUT /Order/Pay with validated payload.
+result = wrapper.settle_partner_posts_safe(
+	2247873100,
+	[3020754398, 2900254804],
+	pay_date="2025-12-19",
+)
+```
+
+Safety behavior:
+- Uses unsettled-partner-post lookup before settlement.
+- Requires all selected post ids to be present in unsettled list.
+- Requires selected post `RemainingAmount` sum to be exactly `0`.
+- Auto-fetches currency-difference tag from `LedgerTag/CurrencyDifferenceTag`.
+- Enforces strict rule: every `ledgerPosts[].Amount` is `0`.
+
+Full settlement logic (implemented):
+1. Resolve target partner id (for example by account number via `wrapper.get_partner_by_account_number(...)`).
+2. Read open posts with `wrapper.get_partner_unsettled_posts(...)`.
+3. Pick candidate post ids to settle (typically one invoice and one payment with opposite `RemainingAmount`).
+4. Build safe payload with `wrapper.build_partner_settlement_payload_safe(...)`.
+5. Inside payload builder, wrapper validates:
+6. `partner_post_ids` is non-empty and has no duplicates.
+7. Every id exists in current unsettled posts for the partner.
+8. All selected posts share one `CurrencyAbbreviation`.
+9. Sum of selected `RemainingAmount` (fallback `Amount`) equals `0` exactly (Decimal math).
+10. Currency-difference ledger tag is fetched automatically from `LedgerTag/CurrencyDifferenceTag`.
+11. `ledgerPosts` is constructed with strict zero-amount adjustment (`Amount = 0`).
+12. `payDate` is converted to Xena fiscal-day int.
+13. `partialSettleId` defaults to the first selected post id unless explicitly provided.
+14. Execute settlement with `wrapper.settle_partner_posts_safe(...)`, which sends validated payload to `PUT /Order/Pay`.
+
+Failure behavior:
+1. Unknown post ids, mixed currency, non-zero sum, missing currency tag, or non-zero ledger adjustment raise `PartnerLedgerError` before write.
+2. API-level validation errors are still returned by Xena if backend state changes between validation and submit.
+
+Recommended usage pattern:
+1. Use newest selected post date as `pay_date` (often payment date).
+2. Preview payload first with `build_partner_settlement_payload_safe(...)`.
+3. Submit with `settle_partner_posts_safe(...)` only after review in high-risk automation flows.
+
+Live verified scenario:
+1. Partner account: `10008` (`MPS Bilskade Bergen AS`, partner id `2247873100`).
+2. Selected unsettled posts: `3020754398` (`-6693.75`) and `2900254804` (`6693.75`).
+3. Sum check: `0.00` (passes strict validation).
+4. Settlement date: newest selected post date (`payDate=20420`, `2025-11-28`).
+5. Built payload included:
+6. `ledgerPosts[0].LedgerTagId=2180183781` (`Valutakursdifferanse`)
+7. `ledgerPosts[0].Amount=0`
+8. `currencyAbbreviation="NOK"`
+9. `partnerPostIds=[3020754398, 2900254804]`
+10. `partialSettleId=3020754398`
+11. Execution result from `settle_partner_posts_safe(...)`: `Success=True`, `StatusCode=200`, `Errors=[]`.
