@@ -7,13 +7,17 @@ from .core import ClientFactory, DateInput, default_client_factory
 from .credentials import XenaCredentials
 from .workflows import (
     FiscalPeriodWorkflow,
+    LedgerListWorkflow,
     LedgerAccountWorkflow,
+    LedgerTagWorkflow,
+    VatWorkflow,
     LedgerGroupDataWorkflow,
     LedgerGroupDataDetailWorkflow,
     LedgerGroupWorkflow,
     PartnerLedgerWorkflow,
     LedgerPostWorkflow,
     PartnerWorkflow,
+    VoucherDraftWorkflow,
     TransactionWorkflow,
 )
 
@@ -39,7 +43,10 @@ class XenaApiWrapper:
         factory = client_factory or default_client_factory
         self._client = factory(self._credentials.api_key, self._credentials.fiscal_id)
         self._fiscal_period_workflow: FiscalPeriodWorkflow | None = None
+        self._ledger_list_workflow: LedgerListWorkflow | None = None
         self._ledger_account_workflow: LedgerAccountWorkflow | None = None
+        self._ledger_tag_workflow: LedgerTagWorkflow | None = None
+        self._vat_workflow: VatWorkflow | None = None
         self._ledger_group_workflow: LedgerGroupWorkflow | None = None
         self._ledger_group_data_workflow: LedgerGroupDataWorkflow | None = None
         self._ledger_group_data_detail_workflow: LedgerGroupDataDetailWorkflow | None = None
@@ -47,6 +54,7 @@ class XenaApiWrapper:
         self._transaction_workflow: TransactionWorkflow | None = None
         self._partner_workflow: PartnerWorkflow | None = None
         self._partner_ledger_workflow: PartnerLedgerWorkflow | None = None
+        self._voucher_draft_workflow: VoucherDraftWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -95,10 +103,22 @@ class XenaApiWrapper:
         return self.fiscal_period.get_id_by_date(selected_date)
 
     @property
+    def ledger(self) -> LedgerListWorkflow:
+        if self._ledger_list_workflow is None:
+            self._ledger_list_workflow = LedgerListWorkflow(self._client, self.fiscal_id)
+        return self._ledger_list_workflow
+
+    @property
     def ledger_account(self) -> LedgerAccountWorkflow:
         if self._ledger_account_workflow is None:
             self._ledger_account_workflow = LedgerAccountWorkflow(self._client, self.fiscal_id)
         return self._ledger_account_workflow
+
+    @property
+    def ledger_tag(self) -> LedgerTagWorkflow:
+        if self._ledger_tag_workflow is None:
+            self._ledger_tag_workflow = LedgerTagWorkflow(self._client, self.fiscal_id)
+        return self._ledger_tag_workflow
 
     @property
     def ledger_group(self) -> LedgerGroupWorkflow:
@@ -106,8 +126,45 @@ class XenaApiWrapper:
             self._ledger_group_workflow = LedgerGroupWorkflow(self._client, self.fiscal_id)
         return self._ledger_group_workflow
 
+    @property
+    def vat(self) -> VatWorkflow:
+        if self._vat_workflow is None:
+            self._vat_workflow = VatWorkflow(self._client, self.fiscal_id)
+        return self._vat_workflow
+
     def get_ledger_groups(self) -> Any:
         return self.ledger_group.get_all()
+
+    def get_ledgers(
+        self,
+        *,
+        force_no_paging: bool = True,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        query_string: str | None = None,
+        include_defaults: bool | None = None,
+    ) -> Any:
+        return self.ledger.get_all(
+            force_no_paging=force_no_paging,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+            query_string=query_string,
+            include_defaults=include_defaults,
+        )
+
+    def get_ledger_entities(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.ledger.get_entities(**kwargs)
+
+    def get_ledger_by_id(self, ledger_id: int | str, **kwargs: Any) -> dict[str, Any]:
+        return self.ledger.get_by_id(ledger_id, **kwargs)
+
+    def get_ledger_by_description(self, description: str, **kwargs: Any) -> dict[str, Any]:
+        return self.ledger.get_by_description(description, **kwargs)
+
+    def get_ledger_id_by_description(self, description: str, **kwargs: Any) -> int:
+        return self.ledger.get_id_by_description(description, **kwargs)
 
     @property
     def ledger_group_data(self) -> LedgerGroupDataWorkflow:
@@ -169,8 +226,136 @@ class XenaApiWrapper:
             )
         return self._partner_ledger_workflow
 
+    @property
+    def voucher_draft(self) -> VoucherDraftWorkflow:
+        if self._voucher_draft_workflow is None:
+            self._voucher_draft_workflow = VoucherDraftWorkflow(
+                self._client,
+                self.fiscal_id,
+                self.ledger,
+            )
+        return self._voucher_draft_workflow
+
     def get_all_accounts(self) -> list[dict[str, Any]]:
         return self.ledger_account.get_all_accounts()
+
+    def get_ledger_tags(
+        self,
+        *,
+        ledger_account: str | None = None,
+        query_string: str | None = None,
+        include_defaults: bool | None = None,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.ledger_tag.get_all(
+            ledger_account=ledger_account,
+            query_string=query_string,
+            include_defaults=include_defaults,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_ledger_tag_entities(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.ledger_tag.get_entities(**kwargs)
+
+    def get_ledger_tag_by_number(self, number: int | str, **kwargs: Any) -> dict[str, Any]:
+        return self.ledger_tag.get_by_number(number, **kwargs)
+
+    def get_ledger_tag_id_by_number(self, number: int | str, **kwargs: Any) -> int:
+        return self.ledger_tag.get_id_by_number(number, **kwargs)
+
+    def get_settlement_tags(
+        self,
+        *,
+        include_default: bool | None = None,
+        query_string: str | None = None,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.ledger_tag.get_settlement_tags(
+            include_default=include_default,
+            query_string=query_string,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_vats(
+        self,
+        *,
+        query_string: str | None = None,
+        include_defaults: bool | None = None,
+        excluded_vat_id: int | None = None,
+        exclude_import_type: bool | None = None,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.vat.get_all(
+            query_string=query_string,
+            include_defaults=include_defaults,
+            excluded_vat_id=excluded_vat_id,
+            exclude_import_type=exclude_import_type,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_vat_entities(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.vat.get_entities(**kwargs)
+
+    def get_vat_by_id(self, vat_id: int) -> Any:
+        return self.vat.get_by_id(vat_id)
+
+    def get_vat_types(
+        self,
+        *,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.vat.get_types(
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_vats_by_type(
+        self,
+        vat_type: str,
+        *,
+        query_string: str | None = None,
+        force_no_paging: bool = True,
+        page: int = 0,
+        page_size: int = 100,
+        show_deactivated: bool = False,
+    ) -> Any:
+        return self.vat.get_by_type(
+            vat_type,
+            query_string=query_string,
+            force_no_paging=force_no_paging,
+            page=page,
+            page_size=page_size,
+            show_deactivated=show_deactivated,
+        )
+
+    def get_vat_by_abbreviation(self, abbreviation: str, **kwargs: Any) -> dict[str, Any]:
+        return self.vat.get_by_abbreviation(abbreviation, **kwargs)
+
+    def get_vat_id_by_abbreviation(self, abbreviation: str, **kwargs: Any) -> int:
+        return self.vat.get_id_by_abbreviation(abbreviation, **kwargs)
 
     def get_balance_accounts(self) -> list[dict[str, Any]]:
         return self.ledger_account.get_balance_accounts()
@@ -669,4 +854,110 @@ class XenaApiWrapper:
             pay_date=pay_date,
             partial_settle_id=partial_settle_id,
             currency_abbreviation=currency_abbreviation,
+        )
+
+    def get_voucher_modified_history(
+        self,
+        *,
+        force_no_paging: bool = True,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+    ) -> Any:
+        return self.voucher_draft.get_modified_history(
+            force_no_paging=force_no_paging,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+        )
+
+    def get_voucher_draft_ledgers(self, **kwargs: Any) -> Any:
+        return self.voucher_draft.list_ledgers(**kwargs)
+
+    def get_voucher_draft_ledger_entities(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.voucher_draft.list_ledger_entities(**kwargs)
+
+    def get_voucher_draft_ledger_by_id(self, ledger_id: int) -> Any:
+        return self.voucher_draft.get_ledger_by_id(ledger_id)
+
+    def get_voucher_draft_ledger_id_by_description(self, description: str, **kwargs: Any) -> int:
+        return self.voucher_draft.get_ledger_id_by_description(description, **kwargs)
+
+    def set_voucher_draft_ledger_by_name(self, description: str, **kwargs: Any) -> int:
+        return self.voucher_draft.set_ledger_by_name(description, **kwargs)
+
+    def set_voucher_draft_ledger_by_id(self, ledger_id: int, **kwargs: Any) -> int:
+        return self.voucher_draft.set_ledger_by_id(ledger_id, **kwargs)
+
+    def get_selected_voucher_draft_ledger_id(self) -> int | None:
+        return self.voucher_draft.get_selected_ledger_id()
+
+    def get_voucher_draft_lines(
+        self,
+        ledger_id: int,
+        *,
+        query_string: str | None = None,
+        force_no_paging: bool = True,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+    ) -> Any:
+        return self.voucher_draft.get_lines(
+            ledger_id,
+            query_string=query_string,
+            force_no_paging=force_no_paging,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+        )
+
+    def create_voucher_draft_line(self, dto: dict[str, Any]) -> Any:
+        return self.voucher_draft.create_line(dto)
+
+    def set_voucher_draft_ensure_xena_ui_is_happy(self, enabled: bool) -> bool:
+        return self.voucher_draft.set_ensure_xena_ui_is_happy(enabled)
+
+    def voucher_draft_dont_care_about_what_ui_feels(self) -> bool:
+        return self.voucher_draft.dont_care_about_what_ui_feels()
+
+    def create_voucher_draft_lines_convenience(
+        self,
+        rows: dict[str, Any] | list[dict[str, Any]],
+        *,
+        ledger_id: int | None = None,
+        ledger_description: str | None = None,
+        voucher_number: int | None = None,
+        strict_settlement_contra: bool = True,
+    ) -> dict[str, Any]:
+        return self.voucher_draft.create_lines_convenience(
+            rows,
+            ledger_id=ledger_id,
+            ledger_description=ledger_description,
+            voucher_number=voucher_number,
+            strict_settlement_contra=strict_settlement_contra,
+        )
+
+    def get_voucher_draft_convenience_dto_help(self) -> dict[str, Any]:
+        return self.voucher_draft.get_convenience_dto_help()
+
+    def update_voucher_draft_line(self, ledger_line_id: int, dto: dict[str, Any]) -> Any:
+        return self.voucher_draft.update_line(ledger_line_id, dto)
+
+    def delete_voucher_draft_line(self, ledger_line_id: int) -> Any:
+        return self.voucher_draft.delete_line(ledger_line_id)
+
+    def update_voucher_draft_ledger(self, ledger_id: int, dto: dict[str, Any]) -> Any:
+        return self.voucher_draft.update_ledger(ledger_id, dto)
+
+    def preview_voucher_draft_summary(
+        self,
+        ledger_id: int,
+        *,
+        bookkeep_all: bool = False,
+        ledger_line_ids: list[int] | None = None,
+    ) -> Any:
+        return self.voucher_draft.preview_summary(
+            ledger_id,
+            bookkeep_all=bookkeep_all,
+            ledger_line_ids=ledger_line_ids,
         )

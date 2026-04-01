@@ -236,6 +236,47 @@ Wrapper-level facade methods are still available for compatibility:
 - `wrapper.get_posting_details(...)`
 - `wrapper.get_posting_details_by_voucher(...)`
 
+## Bookkeeping draft voucher usage (Kassekladd)
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+# 1) Resolve draft ledger dynamically (avoid hardcoded names in calling code).
+ledger_id = wrapper.get_voucher_draft_ledger_id_by_description("Bank2Xena")
+
+# 2) List lines in selected draft ledger.
+lines = wrapper.get_voucher_draft_lines(ledger_id, force_no_paging=True)
+
+# 3) Create and update draft lines.
+created = wrapper.create_voucher_draft_line(
+	{
+		"LedgerId": ledger_id,
+		"FiscalDateDays": 20544,
+		"VoucherNumber": None,
+	}
+)
+
+updated = wrapper.update_voucher_draft_line(
+	created["Id"],
+	{
+		"Id": created["Id"],
+		"LedgerId": ledger_id,
+		"Description": "Imported from bank statement",
+	},
+)
+
+# 4) Preview summary/validation for selected lines.
+summary = wrapper.preview_voucher_draft_summary(
+	ledger_id,
+	bookkeep_all=False,
+	ledger_line_ids=[updated["Id"]],
+)
+```
+
+The draft voucher workflow intentionally targets draft-safe operations and does not call the bookkeeping/approve endpoint.
+
 ## Partner usage
 
 ```python
