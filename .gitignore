@@ -23,3 +23,6 @@ htmlcov/
 # Editor
 .vscode/
 .idea/
+
+# Local notes and captures
+dev-notes/
