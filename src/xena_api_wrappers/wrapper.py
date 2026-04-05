@@ -6,6 +6,10 @@ from typing import Any
 from .core import ClientFactory, DateInput, default_client_factory
 from .credentials import XenaCredentials
 from .workflows import (
+    ArticleWorkflow,
+    ArticleGroupWorkflow,
+    OrderReadWorkflow,
+    OrderWriteWorkflow,
     FiscalPeriodWorkflow,
     LedgerListWorkflow,
     LedgerAccountWorkflow,
@@ -55,6 +59,10 @@ class XenaApiWrapper:
         self._partner_workflow: PartnerWorkflow | None = None
         self._partner_ledger_workflow: PartnerLedgerWorkflow | None = None
         self._voucher_draft_workflow: VoucherDraftWorkflow | None = None
+        self._article_workflow: ArticleWorkflow | None = None
+        self._article_group_workflow: ArticleGroupWorkflow | None = None
+        self._order_read_workflow: OrderReadWorkflow | None = None
+        self._order_write_workflow: OrderWriteWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -235,6 +243,42 @@ class XenaApiWrapper:
                 self.ledger,
             )
         return self._voucher_draft_workflow
+
+    @property
+    def article_group(self) -> ArticleGroupWorkflow:
+        if self._article_group_workflow is None:
+            self._article_group_workflow = ArticleGroupWorkflow(
+                self._client,
+                self.fiscal_id,
+            )
+        return self._article_group_workflow
+
+    @property
+    def article(self) -> ArticleWorkflow:
+        if self._article_workflow is None:
+            self._article_workflow = ArticleWorkflow(
+                self._client,
+                self.fiscal_id,
+            )
+        return self._article_workflow
+
+    @property
+    def order_read(self) -> OrderReadWorkflow:
+        if self._order_read_workflow is None:
+            self._order_read_workflow = OrderReadWorkflow(
+                self._client,
+                self.fiscal_id,
+            )
+        return self._order_read_workflow
+
+    @property
+    def order_write(self) -> OrderWriteWorkflow:
+        if self._order_write_workflow is None:
+            self._order_write_workflow = OrderWriteWorkflow(
+                self._client,
+                self.fiscal_id,
+            )
+        return self._order_write_workflow
 
     def get_all_accounts(self) -> list[dict[str, Any]]:
         return self.ledger_account.get_all_accounts()
@@ -939,6 +983,60 @@ class XenaApiWrapper:
 
     def get_voucher_draft_convenience_dto_help(self) -> dict[str, Any]:
         return self.voucher_draft.get_convenience_dto_help()
+
+    def create_simple_order(
+        self,
+        *,
+        customer_account_number: int,
+        our_reference: str | None = None,
+        your_reference: str | None = None,
+        order_date: DateInput | None = None,
+        gln_number: str | None = None,
+        lines: list[dict[str, Any]] | None = None,
+        hydrate_partner: bool = True,
+        hydrate_articles: bool = True,
+    ) -> dict[str, Any]:
+        return self.order_write.create_simple_order(
+            customer_account_number=customer_account_number,
+            our_reference=our_reference,
+            your_reference=your_reference,
+            order_date=order_date,
+            gln_number=gln_number,
+            lines=lines,
+            hydrate_partner=hydrate_partner,
+            hydrate_articles=hydrate_articles,
+        )
+
+    def create_and_send_invoice_simple(
+        self,
+        *,
+        customer_account_number: int,
+        lines: list[dict[str, Any]],
+        distribution: str | None = None,
+        our_reference: str | None = None,
+        your_reference: str | None = None,
+        order_date: DateInput | None = None,
+        gln_number: str | None = None,
+        email_to_addresses: str | None = None,
+        email_subject: str | None = None,
+        email_body_text: str | None = None,
+        email_include_signature: bool = True,
+        email_document_ids: list[int] | None = None,
+    ) -> dict[str, Any]:
+        return self.order_write.create_and_send_invoice_simple(
+            customer_account_number=customer_account_number,
+            lines=lines,
+            distribution=distribution,
+            our_reference=our_reference,
+            your_reference=your_reference,
+            order_date=order_date,
+            gln_number=gln_number,
+            email_to_addresses=email_to_addresses,
+            email_subject=email_subject,
+            email_body_text=email_body_text,
+            email_include_signature=email_include_signature,
+            email_document_ids=email_document_ids,
+        )
 
     def update_voucher_draft_line(self, ledger_line_id: int, dto: dict[str, Any]) -> Any:
         return self.voucher_draft.update_line(ledger_line_id, dto)

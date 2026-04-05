@@ -277,6 +277,83 @@ summary = wrapper.preview_voucher_draft_summary(
 
 The draft voucher workflow intentionally targets draft-safe operations and does not call the bookkeeping/approve endpoint.
 
+## Order invoice and distribution convenience
+
+Use the high-level helper when you want one call for:
+- create order
+- invoice/bookkeep
+- optional distribution (`none`, `email`, `ehf`)
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+
+result = wrapper.create_and_send_invoice_simple(
+	customer_account_number=10010,
+	order_date="15.04.2026",
+	our_reference="JW",
+	your_reference="GB",
+	gln_number="995361108",
+	lines=[
+		{
+			"article_number": 1020,
+			"quantity": 1,
+			"price_each": 1,
+		}
+	],
+	distribution="none",  # "none" | "email" | "ehf"
+)
+
+order_number = result["create"]["order"]["OrderNumber"]
+```
+
+Email distribution:
+
+```python
+result = wrapper.create_and_send_invoice_simple(
+	customer_account_number=10010,
+	order_date="15.04.2026",
+	lines=[{"article_number": 1020, "quantity": 1, "price_each": 1}],
+	distribution="email",
+	email_to_addresses="jarle@gj-system.no",  # optional if InvoiceEmail is already set on partner/order
+)
+```
+
+EHF distribution (Norway default):
+
+```python
+result = wrapper.create_and_send_invoice_simple(
+	customer_account_number=10010,
+	order_date="15.04.2026",
+	gln_number="995361108",  # optional if already present on partner/order
+	lines=[{"article_number": 1020, "quantity": 1, "price_each": 1}],
+	distribution="ehf",
+)
+```
+
+Skip safety behavior:
+- If `distribution="email"` and no email can be resolved, invoice is created but distribution is skipped.
+- If `distribution="ehf"` and GLN is missing, invoice is created but distribution is skipped.
+
+Auth mode note (important):
+- In current tenant validation, EHF distribution works in API-key wrapper flow.
+- Email send (`/Email/Send`) is currently not reliable with API-key auth and should be treated as unsupported in wrapper-only/API-key scenarios.
+- Email sending can still work in authenticated browser/session context.
+
+Check status in response:
+
+```python
+requested = result["distribution_requested"]
+effective = result["distribution_effective"]
+skip_reason = result["distribution_skipped_reason"]
+```
+
+When skipped:
+- `distribution_requested` is the caller input (`email`/`ehf`)
+- `distribution_effective` becomes `none`
+- `distribution_skipped_reason` contains a human-readable reason
+
 ## Partner usage
 
 ```python
