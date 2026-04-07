@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, cast
 
 from ...core import DateInput, to_fiscal_date_int
@@ -378,6 +379,503 @@ class OrderWriteWorkflow:
                 "gln_number": resolved_gln,
             },
         }
+
+    def create_invoice_by_number(
+        self,
+        invoice_number: int | str,
+        date: DateInput | None = None,
+        distribution: str | None = None,
+        *,
+        email_to_addresses: str | None = None,
+        email_subject: str | None = None,
+        email_body_text: str | None = None,
+        email_include_signature: bool = True,
+        email_document_ids: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """Create a reversing invoice from an existing invoice number.
+
+        Behavior:
+        - Resolves the source invoice and related order/task lines.
+        - Builds mirrored lines with negated quantities.
+        - Uses source invoice date by default; override with date=...
+        - Creates and invoices the reversal order, with optional distribution.
+        """
+
+        requested_distribution = (distribution or "none").strip().lower()
+        if requested_distribution not in SUPPORTED_DISTRIBUTION_MODES:
+            raise OrderDistributionError("distribution must be one of: none, email, ehf")
+
+        source_invoice = self._get_invoice_entity_by_number(invoice_number)
+        source_order_id = source_invoice.get("OrderId")
+        if not isinstance(source_order_id, int):
+            raise OrderWriteError("Could not resolve source OrderId from invoice")
+
+        source_order = self._get_order_by_id(source_order_id)
+        source_task_id = self._get_order_task_id_for_voucher(source_order_id, int(source_invoice["VoucherNumber"]))
+        source_lines = self._get_order_lines_by_task(source_task_id)
+        mirrored_lines = self._build_mirrored_lines(source_lines)
+        if not mirrored_lines:
+            raise OrderWriteError("Could not build reversal lines from source invoice")
+
+        source_invoice_date_days = self._resolve_source_invoice_date_days(source_invoice)
+        selected_date: DateInput = date if date is not None else source_invoice_date_days
+
+        partner_account_number = source_order.get("PartnerAccountNumber")
+        if not isinstance(partner_account_number, int):
+            raise OrderWriteError("Could not resolve PartnerAccountNumber from source order")
+
+        result = self.create_and_send_invoice_simple(
+            customer_account_number=partner_account_number,
+            lines=mirrored_lines,
+            distribution=requested_distribution,
+            our_reference=cast(str | None, source_order.get("OurReference")),
+            your_reference=cast(str | None, source_order.get("YourReference")),
+            order_date=selected_date,
+            gln_number=cast(str | None, source_order.get("GLNNumber")),
+            email_to_addresses=email_to_addresses,
+            email_subject=email_subject,
+            email_body_text=email_body_text,
+            email_include_signature=email_include_signature,
+            email_document_ids=email_document_ids,
+        )
+
+        reverse_order = self._as_dict(cast(dict[str, Any], result.get("create", {})).get("order"))
+        reverse_order_id = reverse_order.get("Id")
+        if not isinstance(reverse_order_id, int):
+            raise OrderWriteError("Could not resolve reverse order id after creating reversal invoice")
+
+        reverse_invoice = self._get_latest_invoice_entity_by_order_id(reverse_order_id)
+
+        settlement = self._settle_reverse_invoice_if_possible(
+            source_invoice=source_invoice,
+            reverse_invoice=reverse_invoice,
+            pay_date=selected_date,
+        )
+
+        return {
+            "source": {
+                "invoice_number": source_invoice.get("VoucherNumber"),
+                "order_id": source_order_id,
+                "task_id": source_task_id,
+                "invoice_date_days": source_invoice_date_days,
+                "line_count": len(source_lines),
+                "invoice_post_id": source_invoice.get("Id"),
+            },
+            "settlement": settlement,
+            "reverse": result,
+        }
+
+    def _get_invoice_entity_by_number(self, invoice_number: int | str) -> dict[str, Any]:
+        lookup = str(invoice_number).strip()
+        if not lookup:
+            raise OrderWriteError("invoice_number must not be empty")
+
+        payload = self._client.order.api_order__get_invoice_get__api__fiscal_fiscal_id__order__invoice(
+            fiscal_id=self._fiscal_id,
+            filter_query_string=lookup,
+            filter_context_type="ContextType_Customer",
+            filter_deliver_filter=None,
+            filter_is_settled=None,
+            filter_partner_id=None,
+            filter_order_status_id=None,
+            filter_responsible_id=None,
+            filter_limit_to_responsible=None,
+            filter_date_from=None,
+            filter_date_to=None,
+            list_options_show_deactivated=False,
+            list_options_page=0,
+            list_options_page_size=100,
+            list_options_force_no_paging=True,
+        )
+        payload_dict = self._as_dict(payload)
+        entities_obj = payload_dict.get("Entities")
+        if not isinstance(entities_obj, list):
+            raise OrderWriteError("Unexpected invoice lookup response shape")
+
+        target = int(lookup) if lookup.isdigit() else None
+        matches = [
+            cast(dict[str, Any], entity)
+            for entity in entities_obj
+            if isinstance(entity, dict)
+            and (
+                (target is not None and entity.get("VoucherNumber") == target)
+                or str(entity.get("VoucherNumber", "")).strip() == lookup
+            )
+        ]
+        if not matches:
+            # Some tenants do not return older invoices reliably through filter_query_string.
+            # Fall back to a full no-paging fetch and match by voucher number locally.
+            all_payload = self._client.order.api_order__get_invoice_get__api__fiscal_fiscal_id__order__invoice(
+                fiscal_id=self._fiscal_id,
+                filter_query_string=None,
+                filter_context_type="ContextType_Customer",
+                filter_deliver_filter=None,
+                filter_is_settled=None,
+                filter_partner_id=None,
+                filter_order_status_id=None,
+                filter_responsible_id=None,
+                filter_limit_to_responsible=None,
+                filter_date_from=None,
+                filter_date_to=None,
+                list_options_show_deactivated=False,
+                list_options_page=0,
+                list_options_page_size=100,
+                list_options_force_no_paging=True,
+            )
+            all_dict = self._as_dict(all_payload)
+            all_entities_obj = all_dict.get("Entities")
+            all_entities = all_entities_obj if isinstance(all_entities_obj, list) else []
+            matches = [
+                cast(dict[str, Any], entity)
+                for entity in all_entities
+                if isinstance(entity, dict)
+                and (
+                    (target is not None and entity.get("VoucherNumber") == target)
+                    or str(entity.get("VoucherNumber", "")).strip() == lookup
+                )
+            ]
+        if not matches:
+            raise OrderWriteError(f"No invoice found for invoice_number '{lookup}'")
+        if len(matches) > 1:
+            raise OrderWriteError(f"More than one invoice matched invoice_number '{lookup}'")
+
+        voucher = matches[0].get("VoucherNumber")
+        if not isinstance(voucher, int):
+            raise OrderWriteError("Matched invoice did not contain an integer VoucherNumber")
+        return matches[0]
+
+    def _get_order_by_id(self, order_id: int) -> dict[str, Any]:
+        payload = self._client.order.api_order__get_get__api__fiscal_fiscal_id__order_id(
+            id=order_id,
+            fiscal_id=self._fiscal_id,
+        )
+        return self._as_dict(payload)
+
+    def _get_order_task_id_for_voucher(self, order_id: int, voucher_number: int) -> int:
+        tasks_payload = self._client.order.api_order_task__get_by_order_get__api__fiscal_fiscal_id__order_id__order_task(
+            id=order_id,
+            fiscal_id=self._fiscal_id,
+            list_options_force_no_paging=True,
+        )
+        tasks_dict = self._as_dict(tasks_payload)
+        entities_obj = tasks_dict.get("Entities")
+        if not isinstance(entities_obj, list) or not entities_obj:
+            raise OrderWriteError("Could not resolve source order tasks for invoice lookup")
+
+        matching_task_ids: list[int] = []
+        for task in entities_obj:
+            if not isinstance(task, dict):
+                continue
+            task_id = task.get("Id")
+            if not isinstance(task_id, int):
+                continue
+
+            journals_payload = self._client.order.api_order_task__get_journal_get__api__fiscal_fiscal_id__order_task_id__journal(
+                id=task_id,
+                fiscal_id=self._fiscal_id,
+                list_options_force_no_paging=True,
+            )
+            journals_dict = self._as_dict(journals_payload)
+            journals_obj = journals_dict.get("Entities")
+            journals = journals_obj if isinstance(journals_obj, list) else []
+            has_voucher = any(
+                isinstance(journal, dict) and journal.get("VoucherNumber") == voucher_number
+                for journal in journals
+            )
+            if has_voucher:
+                matching_task_ids.append(task_id)
+
+        if not matching_task_ids:
+            raise OrderWriteError(
+                f"Could not resolve source order task for voucher {voucher_number}"
+            )
+        if len(matching_task_ids) > 1:
+            raise OrderWriteError(
+                f"Voucher {voucher_number} matched multiple order tasks: {matching_task_ids}"
+            )
+        return matching_task_ids[0]
+
+    def _get_order_lines_by_task(self, task_id: int) -> list[dict[str, Any]]:
+        payload = self._client.order.api_order_line__get_by_order_task_get__api__fiscal_fiscal_id__order_task_id__order_line(
+            id=task_id,
+            fiscal_id=self._fiscal_id,
+            list_options_force_no_paging=True,
+        )
+        payload_dict = self._as_dict(payload)
+        entities_obj = payload_dict.get("Entities")
+        if not isinstance(entities_obj, list):
+            raise OrderWriteError("Unexpected order line response shape for source task")
+        return [cast(dict[str, Any], line) for line in entities_obj if isinstance(line, dict)]
+
+    def _build_mirrored_lines(self, source_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        mirrored: list[dict[str, Any]] = []
+        for source in source_lines:
+            quantity_obj = source.get("Quantity")
+            if not isinstance(quantity_obj, (int, float)):
+                continue
+            quantity = float(quantity_obj)
+            if quantity == 0:
+                continue
+
+            line: dict[str, Any] = {
+                "quantity": -quantity,
+            }
+
+            article_number = source.get("ArticleNumber")
+            article_id = source.get("ArticleId")
+            if isinstance(article_number, (str, int)) and str(article_number).strip():
+                line["article_number"] = str(article_number)
+            elif isinstance(article_id, int):
+                line["article_id"] = article_id
+            else:
+                continue
+
+            price_each = source.get("PriceEach")
+            if not isinstance(price_each, (int, float)):
+                price_each = source.get("UnitNetPrice")
+            if isinstance(price_each, (int, float)):
+                line["price_each"] = float(price_each)
+
+            description = source.get("Description")
+            if isinstance(description, str) and description.strip():
+                line["description"] = description
+
+            vat_id = source.get("VatId")
+            if isinstance(vat_id, int):
+                line["vat_id"] = vat_id
+
+            unit_id = source.get("UnitId")
+            if isinstance(unit_id, int):
+                line["unit_id"] = unit_id
+
+            discount_percent = source.get("DiscountPercent")
+            if isinstance(discount_percent, (int, float)):
+                line["discount_percent"] = float(discount_percent)
+
+            delivery_date_days = source.get("DeliveryDateDays")
+            if isinstance(delivery_date_days, int):
+                line["delivery_date"] = delivery_date_days
+
+            mirrored.append(line)
+
+        return mirrored
+
+    def _resolve_source_invoice_date_days(self, invoice_entity: dict[str, Any]) -> int:
+        journal_obj = invoice_entity.get("Journal")
+        if isinstance(journal_obj, dict):
+            invoicing_date_days = journal_obj.get("InvoicingDateDays")
+            if isinstance(invoicing_date_days, int):
+                return invoicing_date_days
+
+        fiscal_date_days = invoice_entity.get("FiscalDateDays")
+        if isinstance(fiscal_date_days, int):
+            return fiscal_date_days
+
+        raise OrderWriteError("Could not resolve source invoice date for reversal")
+
+    def _get_latest_invoice_entity_by_order_id(self, order_id: int) -> dict[str, Any]:
+        payload = self._client.order.api_order__get_invoice_get__api__fiscal_fiscal_id__order__invoice(
+            fiscal_id=self._fiscal_id,
+            filter_query_string="",
+            filter_context_type="ContextType_Customer",
+            filter_deliver_filter=None,
+            filter_is_settled=None,
+            filter_partner_id=None,
+            filter_order_status_id=None,
+            filter_responsible_id=None,
+            filter_limit_to_responsible=None,
+            filter_date_from=None,
+            filter_date_to=None,
+            list_options_show_deactivated=False,
+            list_options_page=0,
+            list_options_page_size=100,
+            list_options_force_no_paging=True,
+        )
+        payload_dict = self._as_dict(payload)
+        entities_obj = payload_dict.get("Entities")
+        if not isinstance(entities_obj, list):
+            raise OrderWriteError("Unexpected invoice list response shape while resolving reverse invoice")
+
+        matches = [
+            cast(dict[str, Any], entity)
+            for entity in entities_obj
+            if isinstance(entity, dict) and entity.get("OrderId") == order_id
+        ]
+        if not matches:
+            raise OrderWriteError(f"Could not resolve reverse invoice for order id {order_id}")
+
+        # If more than one invoice exists for the order, pick the newest by voucher number.
+        return sorted(
+            matches,
+            key=lambda entity: int(cast(int, entity.get("VoucherNumber")))
+            if isinstance(entity.get("VoucherNumber"), int)
+            else -1,
+        )[-1]
+
+    def _settle_reverse_invoice_if_possible(
+        self,
+        *,
+        source_invoice: dict[str, Any],
+        reverse_invoice: dict[str, Any],
+        pay_date: DateInput,
+    ) -> dict[str, Any]:
+        source_post_id = source_invoice.get("Id")
+        reverse_post_id = reverse_invoice.get("Id")
+        source_voucher = source_invoice.get("VoucherNumber")
+        reverse_voucher = reverse_invoice.get("VoucherNumber")
+        partner_id = source_invoice.get("PartnerId")
+
+        if not isinstance(source_voucher, int) or not isinstance(reverse_voucher, int):
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": "Could not resolve voucher numbers for settlement",
+                "invoice_post_ids": [source_post_id, reverse_post_id],
+                "invoice_voucher_numbers": [source_voucher, reverse_voucher],
+            }
+        if not isinstance(partner_id, int):
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": "Could not resolve partner id for settlement",
+                "invoice_post_ids": [source_post_id, reverse_post_id],
+                "invoice_voucher_numbers": [source_voucher, reverse_voucher],
+            }
+
+        unsettled_payload = self._client.finance.api_payment__get_unsettled_partner_post_get__api__fiscal_fiscal_id__partner_id__unsettled_post(
+            id=partner_id,
+            fiscal_id=self._fiscal_id,
+            list_options_show_deactivated=False,
+            list_options_page=0,
+            list_options_page_size=100,
+            list_options_force_no_paging=True,
+        )
+        unsettled_dict = self._as_dict(unsettled_payload)
+        unsettled_obj = unsettled_dict.get("Entities")
+        unsettled_entities = unsettled_obj if isinstance(unsettled_obj, list) else []
+
+        selected_rows = [
+            cast(dict[str, Any], row)
+            for row in unsettled_entities
+            if isinstance(row, dict) and row.get("VoucherNumber") in (source_voucher, reverse_voucher)
+        ]
+        selected_ids = [
+            cast(int, row.get("Id"))
+            for row in selected_rows
+            if isinstance(row.get("Id"), int)
+        ]
+        selected_vouchers = {
+            cast(int, row.get("VoucherNumber"))
+            for row in selected_rows
+            if isinstance(row.get("VoucherNumber"), int)
+        }
+        missing_vouchers = [
+            voucher for voucher in (source_voucher, reverse_voucher) if voucher not in selected_vouchers
+        ]
+        if len(selected_ids) != 2 or missing_vouchers:
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": f"Could not resolve unsettled partner posts for vouchers: {missing_vouchers or [source_voucher, reverse_voucher]}",
+                "invoice_post_ids": [source_post_id, reverse_post_id],
+                "invoice_voucher_numbers": [source_voucher, reverse_voucher],
+                "partner_post_ids": selected_ids,
+            }
+        currency_values = {
+            str(row.get("CurrencyAbbreviation")).strip()
+            for row in selected_rows
+            if row.get("CurrencyAbbreviation") is not None and str(row.get("CurrencyAbbreviation")).strip()
+        }
+        if len(currency_values) > 1:
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": f"Mixed currencies in selected posts: {sorted(currency_values)}",
+                "partner_post_ids": selected_ids,
+            }
+
+        total = Decimal("0")
+        for row in selected_rows:
+            remaining_amount = row.get("RemainingAmount")
+            amount = row.get("Amount")
+            numeric = remaining_amount if remaining_amount is not None else amount
+            total += self._as_decimal(numeric)
+
+        if total != Decimal("0"):
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": f"Selected posts are not balanced (sum={total})",
+                "partner_post_ids": selected_ids,
+            }
+
+        tag_payload = self._client.finance.api_ledger_tag__get_currency_difference_tag_get__api__fiscal_fiscal_id__ledger_tag__currency_difference_tag(
+            fiscal_id=self._fiscal_id,
+            list_options_force_no_paging=True,
+        )
+        tag_dict = self._as_dict(tag_payload)
+        tag_entities_obj = tag_dict.get("Entities")
+        tag_entities = tag_entities_obj if isinstance(tag_entities_obj, list) else []
+        if not tag_entities or not isinstance(tag_entities[0], dict):
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": "Currency difference tag not found",
+                "partner_post_ids": selected_ids,
+            }
+
+        tag = cast(dict[str, Any], tag_entities[0])
+        tag_id = tag.get("Id")
+        if not isinstance(tag_id, int):
+            return {
+                "attempted": False,
+                "settled": False,
+                "reason": "Currency difference tag missing integer Id",
+                "partner_post_ids": selected_ids,
+            }
+
+        currency_abbreviation = next(iter(currency_values), "NOK")
+        ledger_tag_number = tag.get("LedgerTagNumber")
+        if ledger_tag_number is None:
+            ledger_tag_number = tag.get("Number")
+
+        pay_payload = {
+            "ledgerPosts": [
+                {
+                    "LedgerTagId": tag_id,
+                    "LedgerTagNumber": ledger_tag_number,
+                    "LedgerTagDescription": tag.get("Description"),
+                    "Amount": 0,
+                }
+            ],
+            "currencyAbbreviation": currency_abbreviation,
+            "partnerPostIds": selected_ids,
+            "payDate": to_fiscal_date_int(pay_date),
+            "partialSettleId": selected_ids[0],
+        }
+
+        pay_result = self._client.order.api_order__put_pay_put__api__fiscal_fiscal_id__order__pay(
+            pay_data=pay_payload,
+            fiscal_id=self._fiscal_id,
+        )
+
+        return {
+            "attempted": True,
+            "settled": True,
+            "invoice_post_ids": [source_post_id, reverse_post_id],
+            "invoice_voucher_numbers": [source_voucher, reverse_voucher],
+            "partner_post_ids": selected_ids,
+            "payload": pay_payload,
+            "result": self._as_dict(pay_result) if not isinstance(pay_result, dict) else pay_result,
+        }
+
+    @staticmethod
+    def _as_decimal(value: Any) -> Decimal:
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, (int, float, str)):
+            return Decimal(str(value))
+        raise OrderWriteError(f"Unsupported numeric settlement value: {value!r}")
 
     def _resolve_partner_for_hydration(self, hydrator: OrderDtoHydrator) -> dict[str, Any] | None:
         partner_id = hydrator.get_field("PartnerId")

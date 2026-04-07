@@ -1038,6 +1038,29 @@ class XenaApiWrapper:
             email_document_ids=email_document_ids,
         )
 
+    def create_invoice_by_number(
+        self,
+        invoice_number: int | str,
+        date: DateInput | None = None,
+        distribution: str | None = None,
+        *,
+        email_to_addresses: str | None = None,
+        email_subject: str | None = None,
+        email_body_text: str | None = None,
+        email_include_signature: bool = True,
+        email_document_ids: list[int] | None = None,
+    ) -> dict[str, Any]:
+        return self.order_write.create_invoice_by_number(
+            invoice_number,
+            date,
+            distribution,
+            email_to_addresses=email_to_addresses,
+            email_subject=email_subject,
+            email_body_text=email_body_text,
+            email_include_signature=email_include_signature,
+            email_document_ids=email_document_ids,
+        )
+
     def update_voucher_draft_line(self, ledger_line_id: int, dto: dict[str, Any]) -> Any:
         return self.voucher_draft.update_line(ledger_line_id, dto)
 

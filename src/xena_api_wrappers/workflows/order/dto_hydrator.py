@@ -12,7 +12,20 @@ from .order_errors import OrderWriteHydrationError
 
 @dataclass
 class OrderDtoHydrator:
-    """Mutable DTO helper that builds order payloads from simple setter calls."""
+    """Mutable DTO helper that builds order payloads from simple setter calls.
+
+    Date semantics
+    - All date setter methods accept DateInput and normalize through to_fiscal_date_int.
+    - set_order_date(...) and set_order_date_today() write DateDays.
+    - set_dates(order_date=...) writes FiscalDateDays.
+    - set_due_date(...) writes DueDateDays.
+    - set_delivery_date(...) and set_article(delivery_date=...) write DeliveryDateDays.
+
+    Field conventions
+    - Business-friendly line aliases are normalized to API-oriented keys.
+    - set_article(...) uses UnitNetPrice, while normalized convenience lines primarily use PriceEach.
+    - Raw mutate helpers (hydrate/set_field) intentionally bypass normalization and may set any key/value directly.
+    """
 
     _dto: dict[str, Any]
     _article_collection_key: str = "OrderTaskLines"
@@ -117,28 +130,65 @@ class OrderDtoHydrator:
         order_date: DateInput | None = None,
         due_date: DateInput | None = None,
         delivery_date: DateInput | None = None,
+        allow_mixed_order_date_fields: bool = False,
     ) -> "OrderDtoHydrator":
+        """Set common header dates using fiscal-day integer conversion.
+
+        Note: order_date maps to FiscalDateDays in this helper.
+        Use set_order_date(...) when DateDays is required.
+        By default, conflicting DateDays/FiscalDateDays combinations are rejected.
+        """
         if order_date is not None:
-            self._dto["FiscalDateDays"] = to_fiscal_date_int(order_date)
+            fiscal_date_days = to_fiscal_date_int(order_date)
+            self._guard_conflicting_order_date_fields(
+                target_key="FiscalDateDays",
+                new_value=fiscal_date_days,
+                allow_mixed_order_date_fields=allow_mixed_order_date_fields,
+            )
+            self._dto["FiscalDateDays"] = fiscal_date_days
         if due_date is not None:
             self._dto["DueDateDays"] = to_fiscal_date_int(due_date)
         if delivery_date is not None:
             self._dto["DeliveryDateDays"] = to_fiscal_date_int(delivery_date)
         return self
 
-    def set_order_date(self, value: DateInput) -> "OrderDtoHydrator":
-        self._dto["DateDays"] = to_fiscal_date_int(value)
+    def set_order_date(
+        self,
+        value: DateInput,
+        *,
+        allow_mixed_order_date_fields: bool = False,
+    ) -> "OrderDtoHydrator":
+        """Set DateDays from DateInput via to_fiscal_date_int.
+
+        By default, conflicting DateDays/FiscalDateDays combinations are rejected.
+        """
+        date_days = to_fiscal_date_int(value)
+        self._guard_conflicting_order_date_fields(
+            target_key="DateDays",
+            new_value=date_days,
+            allow_mixed_order_date_fields=allow_mixed_order_date_fields,
+        )
+        self._dto["DateDays"] = date_days
         return self
 
-    def set_order_date_today(self) -> "OrderDtoHydrator":
-        self._dto["DateDays"] = to_fiscal_date_int(date.today())
-        return self
+    def set_order_date_today(
+        self,
+        *,
+        allow_mixed_order_date_fields: bool = False,
+    ) -> "OrderDtoHydrator":
+        """Set DateDays to today's local process date converted to fiscal-day int."""
+        return self.set_order_date(
+            date.today(),
+            allow_mixed_order_date_fields=allow_mixed_order_date_fields,
+        )
 
     def set_due_date(self, value: DateInput) -> "OrderDtoHydrator":
+        """Set DueDateDays from DateInput via to_fiscal_date_int."""
         self._dto["DueDateDays"] = to_fiscal_date_int(value)
         return self
 
     def set_delivery_date(self, value: DateInput) -> "OrderDtoHydrator":
+        """Set DeliveryDateDays from DateInput via to_fiscal_date_int."""
         self._dto["DeliveryDateDays"] = to_fiscal_date_int(value)
         return self
 
@@ -256,6 +306,11 @@ class OrderDtoHydrator:
         delivery_date: DateInput | None = None,
         extra: dict[str, Any] | None = None,
     ) -> "OrderDtoHydrator":
+        """Add one article line using direct line-field keys.
+
+        - unit_net_price writes UnitNetPrice.
+        - delivery_date writes DeliveryDateDays via to_fiscal_date_int.
+        """
         if article_id is None and article_number is None:
             raise OrderWriteHydrationError("set_article requires article_id or article_number")
 
@@ -508,6 +563,13 @@ class OrderDtoHydrator:
 
     @staticmethod
     def normalize_order_line_input(line: dict[str, Any]) -> dict[str, Any]:
+        """Normalize business-friendly line input to API key names.
+
+        Examples:
+        - article_number -> ArticleNumber
+        - unit_net_price -> PriceEach
+        - discount_pct/discount_percent + net_total helpers populate Totals when applicable
+        """
         return OrderDtoHydrator._normalize_order_line_input(line)
 
     @staticmethod
@@ -551,6 +613,40 @@ class OrderDtoHydrator:
             "DiscountTotalRatio": float(ratio),
             "DiscountTotalPct": float(pct),
         }
+
+    def _guard_conflicting_order_date_fields(
+        self,
+        *,
+        target_key: str,
+        new_value: int,
+        allow_mixed_order_date_fields: bool,
+    ) -> None:
+        if allow_mixed_order_date_fields:
+            return
+
+        if target_key == "DateDays":
+            other_key = "FiscalDateDays"
+        elif target_key == "FiscalDateDays":
+            other_key = "DateDays"
+        else:
+            return
+
+        other_value = self._dto.get(other_key)
+        if other_value is None:
+            return
+
+        try:
+            other_int = int(other_value)
+        except (TypeError, ValueError) as exc:
+            raise OrderWriteHydrationError(
+                f"Cannot safely set {target_key}: existing {other_key} is not an integer"
+            ) from exc
+
+        if other_int != new_value:
+            raise OrderWriteHydrationError(
+                f"Conflicting order date fields: {other_key}={other_int} and {target_key}={new_value}. "
+                "Pass allow_mixed_order_date_fields=True to override."
+            )
 
     @staticmethod
     def build_line_totals(
@@ -604,9 +700,13 @@ class OrderDtoHydrator:
                 "Use hydrate(...) for full raw payload compatibility.",
                 "Use set_customer(...) and set_article(...) for simplified hydration.",
                 "Use set_order_date_today() when caller does not provide explicit order date.",
+                "DateInput values are normalized with to_fiscal_date_int in date setter methods.",
+                "set_order_date(...) writes DateDays while set_dates(order_date=...) writes FiscalDateDays.",
+                "By default conflicting DateDays/FiscalDateDays values raise OrderWriteHydrationError.",
                 "Use set_customer_fields(...) and set_delivery_address(...) for common customer/delivery edits.",
                 "Use set_order_line/edit_order_line/remove_order_line to fully manage line state.",
                 "Use set_order_line_pricing(...) with explicit discount_pct/net_total when discount/total control is needed.",
+                "set_article(...) uses UnitNetPrice, while convenience line normalization maps unit_net_price to PriceEach.",
                 "Field names follow observed/generated API patterns and may require additional keys per fiscal setup.",
             ],
         }

@@ -54,6 +54,7 @@ class _FakeOrderApi:
         self.last_delete_id: int | None = None
         self.created_lines: list[dict[str, Any]] = []
         self.last_send_electronic_data: dict[str, Any] | None = None
+        self.last_pay_data: dict[str, Any] | None = None
         self.journal_entities: list[dict[str, Any]] = [
             {
                 "Id": 3038320382,
@@ -63,11 +64,71 @@ class _FakeOrderApi:
                 "VoucherNumber": 100277,
             }
         ]
+        self.invoice_entities: list[dict[str, Any]] = [
+            {
+                "Id": 3038185189,
+                "OrderId": 4100,
+                "OrderNumber": 200100,
+                "VoucherNumber": 100276,
+                "FiscalDateDays": 20548,
+                "PartnerId": 2251919792,
+                "PartnerAccountNumber": 10010,
+                "IsSettled": False,
+                "PostAmount": 1.0,
+                "SettledPostAmount": 0.0,
+                "SettlementId": None,
+                "DocumentId": 3038297263,
+                "Journal": {
+                    "InvoicingDateDays": 20548,
+                    "VoucherNumber": 100276,
+                },
+            }
+        ]
+        self.orders_by_id: dict[int, dict[str, Any]] = {
+            4100: {
+                "Id": 4100,
+                "PartnerAccountNumber": 10010,
+                "OurReference": "JW",
+                "YourReference": "GB",
+                "GLNNumber": "995361108",
+                "DateDays": 20548,
+            }
+        }
+        self.order_tasks_by_order_id: dict[int, list[dict[str, Any]]] = {
+            4100: [{"Id": 9100, "Description": "Invoice task"}]
+        }
+        self.order_task_journals: dict[int, list[dict[str, Any]]] = {
+            9100: [{"VoucherNumber": 100276}]
+        }
+        self.order_lines_by_task: dict[int, list[dict[str, Any]]] = {
+            9100: [
+                {
+                    "ArticleNumber": "1020",
+                    "Description": "Secura KS - Kvalitetsstyring",
+                    "Quantity": 3.0,
+                    "PriceEach": 750.0,
+                }
+            ]
+        }
+        self.next_invoice_voucher = 100500
 
     def api_order__post_post__api__fiscal_fiscal_id__order(self, create_data: dict[str, Any], fiscal_id: str, **kwargs: Any) -> dict[str, Any]:
         _ = (fiscal_id, kwargs)
         self.last_create_data = dict(create_data)
-        return {"Id": 4001, "Version": 1, **create_data}
+        created = {"Id": 4001, "Version": 1, **create_data}
+        self.orders_by_id[4001] = {
+            "Id": 4001,
+            "PartnerAccountNumber": create_data.get("PartnerAccountNumber", 10010),
+            "OurReference": create_data.get("OurReference"),
+            "YourReference": create_data.get("YourReference"),
+            "GLNNumber": create_data.get("GLNNumber"),
+            "DateDays": create_data.get("DateDays"),
+            "PartnerId": create_data.get("PartnerId", 2251919792),
+            "InvoiceEmail": create_data.get("InvoiceEmail"),
+            "Version": 1,
+        }
+        self.order_tasks_by_order_id[4001] = [{"Id": 9001, "Description": "Created task"}]
+        return created
 
     def api_order__put_put__api__fiscal_fiscal_id__order_id(
         self,
@@ -127,12 +188,65 @@ class _FakeOrderApi:
         _ = (fiscal_id, kwargs)
         self.last_bookkeep_id = id
         self.last_bookkeep_data = dict(bookkeep_data)
+        order_meta = self.orders_by_id.get(id, {})
+        voucher = self.next_invoice_voucher
+        self.next_invoice_voucher += 1
+        invoice_entity = {
+            "Id": 500000 + id,
+            "OrderId": id,
+            "OrderNumber": order_meta.get("OrderNumber", 999999),
+            "VoucherNumber": voucher,
+            "FiscalDateDays": bookkeep_data.get("invoicingDate"),
+            "PartnerId": order_meta.get("PartnerId", 2251919792),
+            "PartnerAccountNumber": order_meta.get("PartnerAccountNumber", 10010),
+            "IsSettled": False,
+            "PostAmount": -1.0,
+            "SettledPostAmount": 0.0,
+            "SettlementId": None,
+            "DocumentId": 700000 + id,
+            "Journal": {
+                "InvoicingDateDays": bookkeep_data.get("invoicingDate"),
+                "VoucherNumber": voucher,
+                "OrderId": id,
+            },
+        }
+        self.invoice_entities.insert(0, invoice_entity)
         return {"Id": id, "State": "Invoiced"}
 
     def api_order__delete_delete__api__fiscal_fiscal_id__order_id(self, id: int, fiscal_id: str, **kwargs: Any) -> dict[str, Any]:
         _ = (fiscal_id, kwargs)
         self.last_delete_id = id
         return {"Deleted": id, "Success": True}
+
+    def api_order__get_get__api__fiscal_fiscal_id__order_id(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        if id in self.orders_by_id:
+            return dict(self.orders_by_id[id])
+        return {"Id": id, "PartnerAccountNumber": 10010}
+
+    def api_order__get_invoice_get__api__fiscal_fiscal_id__order__invoice(
+        self,
+        fiscal_id: str,
+        filter_query_string: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        entities = list(self.invoice_entities)
+        if isinstance(filter_query_string, str) and filter_query_string.strip():
+            lookup = filter_query_string.strip()
+            entities = [
+                e
+                for e in entities
+                if lookup in str(e.get("VoucherNumber", ""))
+                or lookup in str(e.get("OrderNumber", ""))
+                or lookup in str(e.get("OrderId", ""))
+            ]
+        return {"Entities": entities}
 
     def api_order_task__get_by_order_get__api__fiscal_fiscal_id__order_id__order_task(
         self,
@@ -141,7 +255,27 @@ class _FakeOrderApi:
         **kwargs: Any,
     ) -> dict[str, Any]:
         _ = (id, fiscal_id, kwargs)
+        if id in self.order_tasks_by_order_id:
+            return {"Entities": list(self.order_tasks_by_order_id[id])}
         return {"Entities": [{"Id": 9001}]}
+
+    def api_order_task__get_journal_get__api__fiscal_fiscal_id__order_task_id__journal(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        return {"Entities": list(self.order_task_journals.get(id, []))}
+
+    def api_order_line__get_by_order_task_get__api__fiscal_fiscal_id__order_task_id__order_line(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        return {"Entities": list(self.order_lines_by_task.get(id, []))}
 
     def api_order_line__post_post__api__fiscal_fiscal_id__order_line(
         self,
@@ -194,6 +328,70 @@ class _FakeOrderApi:
         _ = (fiscal_id, kwargs)
         self.last_send_electronic_data = dict(invoice_data)
         return {"Success": True}
+
+    def api_order__put_pay_put__api__fiscal_fiscal_id__order__pay(
+        self,
+        pay_data: dict[str, Any],
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        self.last_pay_data = dict(pay_data)
+        partner_post_ids = [int(x) for x in pay_data.get("partnerPostIds", [])]
+        settlement_id = 3038553565
+        for entity in self.invoice_entities:
+            if isinstance(entity, dict) and entity.get("Id") in partner_post_ids:
+                entity["IsSettled"] = True
+                entity["SettlementId"] = settlement_id
+                entity["SettledPostAmount"] = entity.get("PostAmount")
+        return {"Success": True, "SettlementId": settlement_id}
+
+
+class _FakeFinanceApi:
+    def __init__(self, order_api: _FakeOrderApi) -> None:
+        self._order_api = order_api
+
+    def api_payment__get_unsettled_partner_post_get__api__fiscal_fiscal_id__partner_id__unsettled_post(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        entities: list[dict[str, Any]] = []
+        for invoice in self._order_api.invoice_entities:
+            if not isinstance(invoice, dict):
+                continue
+            if invoice.get("PartnerId") != id:
+                continue
+            if invoice.get("IsSettled"):
+                continue
+            entities.append(
+                {
+                    "Id": invoice.get("Id"),
+                    "CurrencyAbbreviation": "NOK",
+                    "Amount": invoice.get("PostAmount"),
+                    "RemainingAmount": invoice.get("PostAmount"),
+                    "VoucherNumber": invoice.get("VoucherNumber"),
+                }
+            )
+        return {"Entities": entities}
+
+    def api_ledger_tag__get_currency_difference_tag_get__api__fiscal_fiscal_id__ledger_tag__currency_difference_tag(
+        self,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        return {
+            "Entities": [
+                {
+                    "Id": 1920,
+                    "LedgerTagNumber": 1920,
+                    "Description": "Valutadifferanser",
+                }
+            ]
+        }
 
 
 class _FakePartnerWorkflow:
@@ -258,7 +456,8 @@ class _FakePartnerWorkflowMissingEmailAndGln(_FakePartnerWorkflow):
 class OrderWriteWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.api = _FakeOrderApi()
-        self.workflow = OrderWriteWorkflow(SimpleNamespace(order=self.api), "104779")
+        self.finance = _FakeFinanceApi(self.api)
+        self.workflow = OrderWriteWorkflow(SimpleNamespace(order=self.api, finance=self.finance), "104779")
 
     def test_create_and_update(self) -> None:
         created = self.workflow.create({"PartnerId": 9001, "ContextType": "ContextType_Customer"})
@@ -310,6 +509,35 @@ class OrderWriteWorkflowTests(unittest.TestCase):
 
         with self.assertRaises(OrderWriteHydrationError):
             hydrator.set_article(quantity=1)
+
+    def test_hydrator_rejects_conflicting_order_and_fiscal_date_days(self) -> None:
+        hydrator = self.workflow.new_hydrator()
+        hydrator.set_order_date("2026-04-05")
+
+        with self.assertRaises(OrderWriteHydrationError):
+            hydrator.set_dates(order_date="2026-04-06")
+
+        hydrator2 = self.workflow.new_hydrator()
+        hydrator2.set_dates(order_date="2026-04-05")
+
+        with self.assertRaises(OrderWriteHydrationError):
+            hydrator2.set_order_date("2026-04-06")
+
+    def test_hydrator_allows_matching_order_and_fiscal_date_days(self) -> None:
+        hydrator = self.workflow.new_hydrator()
+        hydrator.set_order_date("2026-04-05")
+        hydrator.set_dates(order_date="2026-04-05")
+
+        dto = hydrator.to_dict()
+        self.assertEqual(dto["DateDays"], dto["FiscalDateDays"])
+
+    def test_hydrator_can_override_mixed_date_guard(self) -> None:
+        hydrator = self.workflow.new_hydrator()
+        hydrator.set_order_date("2026-04-05")
+        hydrator.set_dates(order_date="2026-04-06", allow_mixed_order_date_fields=True)
+
+        dto = hydrator.to_dict()
+        self.assertNotEqual(dto["DateDays"], dto["FiscalDateDays"])
 
     def test_hydrator_can_manipulate_full_order_state(self) -> None:
         hydrator = self.workflow.new_hydrator({"OrderTaskLines": []})
@@ -721,6 +949,50 @@ class OrderWriteWorkflowTests(unittest.TestCase):
         self.assertTrue(str(response["distribution_skipped_reason"]).startswith("EHF distribution skipped"))
         self.assertEqual(response["invoice"]["distribution"], "none")
         self.assertIsNone(self.api.last_send_electronic_data)
+
+    def test_create_invoice_by_number_uses_source_date_and_mirrored_lines(self) -> None:
+        self.workflow._partner_workflow = _FakePartnerWorkflow()  # type: ignore[assignment]
+        self.workflow._article_workflow = _FakeArticleWorkflow()  # type: ignore[assignment]
+
+        response = self.workflow.create_invoice_by_number(100276)
+
+        self.assertEqual(response["source"]["invoice_number"], 100276)
+        self.assertEqual(response["source"]["order_id"], 4100)
+        self.assertEqual(response["source"]["task_id"], 9100)
+        self.assertEqual(response["source"]["invoice_date_days"], 20548)
+
+        # Reversal line must negate source quantity.
+        created_line = self.api.created_lines[-1]
+        self.assertEqual(created_line["ArticleNumber"], "1020")
+        self.assertEqual(created_line["Quantity"], -3.0)
+        self.assertEqual(created_line["UnitNetPrice"], 750.0)
+
+        # Invoicing date defaults to source invoice date.
+        assert self.api.last_bookkeep_data is not None
+        self.assertEqual(self.api.last_bookkeep_data["invoicingDate"], 20548)
+        self.assertIsNotNone(self.api.last_pay_data)
+        self.assertTrue(response["settlement"]["attempted"])
+        self.assertTrue(response["settlement"]["settled"])
+
+    def test_create_invoice_by_number_allows_date_override_and_distribution(self) -> None:
+        self.workflow._partner_workflow = _FakePartnerWorkflow()  # type: ignore[assignment]
+        self.workflow._article_workflow = _FakeArticleWorkflow()  # type: ignore[assignment]
+
+        response = self.workflow.create_invoice_by_number(
+            100276,
+            "16.04.2026",
+            "ehf",
+        )
+
+        self.assertEqual(response["reverse"]["distribution_requested"], "ehf")
+        assert self.api.last_bookkeep_data is not None
+        self.assertEqual(self.api.last_bookkeep_data["invoicingDate"], 20559)
+        self.assertIsNotNone(self.api.last_send_electronic_data)
+        self.assertTrue(response["settlement"]["settled"])
+
+    def test_create_invoice_by_number_rejects_invalid_distribution(self) -> None:
+        with self.assertRaises(OrderDistributionError):
+            self.workflow.create_invoice_by_number(100276, distribution="sms")
 
 
 if __name__ == "__main__":
