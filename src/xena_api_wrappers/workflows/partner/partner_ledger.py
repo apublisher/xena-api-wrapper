@@ -173,6 +173,37 @@ class PartnerLedgerWorkflow:
     def get_supplier_posts(self, partner_id: int, **kwargs: Any) -> Any:
         return self.get_posts(partner_id, context_type="ContextType_Supplier", **kwargs)
 
+    def get_balances_by_date(
+        self,
+        calculated_by: DateInput,
+        *,
+        context_type: str | None = "ContextType_Customer",
+        account_number_from: int | None = None,
+        account_number_to: int | None = None,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        force_no_paging: bool = True,
+    ) -> Any:
+        normalized_context_type = _normalize_context_type(context_type)
+        return self._client.finance.api_transaction__get_partner_saldo_by_unit_report_get__api__fiscal_fiscal_id__transaction__partner_saldo_by_unit_report_list(
+            calculated_by=to_fiscal_date_int(calculated_by),
+            fiscal_id=self._fiscal_id,
+            account_number_from=account_number_from,
+            account_number_to=account_number_to,
+            context_type=normalized_context_type,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+
+    def get_customer_balances_by_date(self, calculated_by: DateInput, **kwargs: Any) -> Any:
+        return self.get_balances_by_date(calculated_by, context_type="ContextType_Customer", **kwargs)
+
+    def get_supplier_balances_by_date(self, calculated_by: DateInput, **kwargs: Any) -> Any:
+        return self.get_balances_by_date(calculated_by, context_type="ContextType_Supplier", **kwargs)
+
     def get_unsettled_posts(
         self,
         partner_id: int,

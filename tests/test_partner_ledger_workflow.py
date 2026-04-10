@@ -11,6 +11,7 @@ from xena_api_wrappers.workflows.partner.partner_ledger import PartnerLedgerErro
 class _FakeFinance:
     def __init__(self) -> None:
         self.last_call: dict[str, Any] | None = None
+        self.last_balance_call: dict[str, Any] | None = None
         self.last_unsettled_call: dict[str, Any] | None = None
         self.last_currency_tag_call: dict[str, Any] | None = None
         self.unsettled_entities: list[dict[str, Any]] = [
@@ -62,6 +63,43 @@ class _FakeFinance:
             "force_no_paging": list_options_force_no_paging,
         }
         return {"Count": 1, "Entities": [{"PartnerId": id, "ContextType": context_type}]}
+
+    def api_transaction__get_partner_saldo_by_unit_report_get__api__fiscal_fiscal_id__transaction__partner_saldo_by_unit_report_list(
+        self,
+        calculated_by: int,
+        fiscal_id: str,
+        account_number_from: int | None = None,
+        account_number_to: int | None = None,
+        context_type: str | None = None,
+        list_options_show_deactivated: bool | None = None,
+        list_options_page: int | None = None,
+        list_options_page_size: int | None = None,
+        list_options_force_no_paging: bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = kwargs
+        self.last_balance_call = {
+            "calculated_by": calculated_by,
+            "fiscal_id": fiscal_id,
+            "account_number_from": account_number_from,
+            "account_number_to": account_number_to,
+            "context_type": context_type,
+            "show_deactivated": list_options_show_deactivated,
+            "page": list_options_page,
+            "page_size": list_options_page_size,
+            "force_no_paging": list_options_force_no_paging,
+        }
+        return {
+            "Count": 1,
+            "Entities": [
+                {
+                    "AccountNumber": account_number_from or 10000,
+                    "ContextType": context_type,
+                    "Saldo": 1234.56,
+                    "CalculatedBy": calculated_by,
+                }
+            ],
+        }
 
     def api_payment__get_unsettled_partner_post_get__api__fiscal_fiscal_id__partner_id__unsettled_post(
         self,
@@ -244,6 +282,40 @@ class PartnerLedgerWorkflowTests(unittest.TestCase):
         call = cast(dict[str, Any], self.fake_finance.last_call)
         self.assertEqual(call["context_type"], "ContextType_Supplier")
         self.assertEqual(call["post_type"], "PartnerPostType_SupplierPayment")
+
+    def test_get_balances_by_date_forwards_filters_and_converts_date(self) -> None:
+        payload = self.workflow.get_balances_by_date(
+            date(2025, 12, 31),
+            context_type="supplier",
+            account_number_from=10000,
+            account_number_to=20000,
+            show_deactivated=True,
+            page=3,
+            page_size=25,
+            force_no_paging=False,
+        )
+
+        self.assertEqual(payload["Count"], 1)
+        self.assertIsNotNone(self.fake_finance.last_balance_call)
+        call = cast(dict[str, Any], self.fake_finance.last_balance_call)
+        self.assertEqual(call["calculated_by"], 20453)
+        self.assertEqual(call["fiscal_id"], "104779")
+        self.assertEqual(call["context_type"], "ContextType_Supplier")
+        self.assertEqual(call["account_number_from"], 10000)
+        self.assertEqual(call["account_number_to"], 20000)
+        self.assertEqual(call["show_deactivated"], True)
+        self.assertEqual(call["page"], 3)
+        self.assertEqual(call["page_size"], 25)
+        self.assertEqual(call["force_no_paging"], False)
+
+    def test_balance_context_convenience_methods(self) -> None:
+        self.workflow.get_customer_balances_by_date("2025-12-31")
+        self.assertIsNotNone(self.fake_finance.last_balance_call)
+        self.assertEqual(cast(dict[str, Any], self.fake_finance.last_balance_call)["context_type"], "ContextType_Customer")
+
+        self.workflow.get_supplier_balances_by_date("2025-12-31")
+        self.assertIsNotNone(self.fake_finance.last_balance_call)
+        self.assertEqual(cast(dict[str, Any], self.fake_finance.last_balance_call)["context_type"], "ContextType_Supplier")
 
     def test_build_settlement_payload_safe(self) -> None:
         payload = self.workflow.build_settlement_payload_safe(

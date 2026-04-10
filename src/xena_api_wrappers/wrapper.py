@@ -846,6 +846,35 @@ class XenaApiWrapper:
     def get_supplier_partner_posts(self, partner_id: int, **kwargs: Any) -> Any:
         return self.partner_ledger.get_supplier_posts(partner_id, **kwargs)
 
+    def get_partner_balances_by_date(
+        self,
+        calculated_by: DateInput,
+        *,
+        context_type: str | None = "ContextType_Customer",
+        account_number_from: int | None = None,
+        account_number_to: int | None = None,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        force_no_paging: bool = True,
+    ) -> Any:
+        return self.partner_ledger.get_balances_by_date(
+            calculated_by,
+            context_type=context_type,
+            account_number_from=account_number_from,
+            account_number_to=account_number_to,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+            force_no_paging=force_no_paging,
+        )
+
+    def get_customer_balances_by_date(self, calculated_by: DateInput, **kwargs: Any) -> Any:
+        return self.partner_ledger.get_customer_balances_by_date(calculated_by, **kwargs)
+
+    def get_supplier_balances_by_date(self, calculated_by: DateInput, **kwargs: Any) -> Any:
+        return self.partner_ledger.get_supplier_balances_by_date(calculated_by, **kwargs)
+
     def get_partner_unsettled_posts(
         self,
         partner_id: int,
