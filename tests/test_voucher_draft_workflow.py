@@ -14,6 +14,7 @@ class _FakeFinance:
     def __init__(self) -> None:
         self._next_id = 3037274927
         self.last_updated_dto: dict[str, Any] | None = None
+        self.last_payment_suggestion_call: dict[str, Any] | None = None
 
     def api_bookkeeping__get_voucher_modified_history_get__api__fiscal_fiscal_id__bookkeeping__voucher_modified_history(
         self,
@@ -115,6 +116,38 @@ class _FakeFinance:
     ) -> dict[str, Any]:
         _ = fiscal_id
         return {"LedgerId": id, "Payload": data}
+
+    def api_payment__get_payment_suggestion_get__api__fiscal_fiscal_id__payment__unsettled_post(
+        self,
+        query_string: str,
+        fiscal_id: str,
+        per_date: int | None = None,
+        include_manual_payment: bool | None = None,
+        list_options_show_deactivated: bool | None = None,
+        list_options_page: int | None = None,
+        list_options_page_size: int | None = None,
+        list_options_force_no_paging: bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = kwargs
+        self.last_payment_suggestion_call = {
+            "query_string": query_string,
+            "fiscal_id": fiscal_id,
+            "per_date": per_date,
+            "include_manual_payment": include_manual_payment,
+            "show_deactivated": list_options_show_deactivated,
+            "page": list_options_page,
+            "page_size": list_options_page_size,
+            "force_no_paging": list_options_force_no_paging,
+        }
+        return {
+            "Count": 3,
+            "Entities": [
+                {"Id": 1, "VoucherNumber": 1001, "PostType": "PartnerPostType_CustomerInvoice"},
+                {"Id": 2, "VoucherNumber": 2001, "PostType": "PartnerPostType_SupplierInvoice"},
+                {"Id": 3, "VoucherNumber": 2002, "PostType": "PartnerPostType_SupplierPayment"},
+            ],
+        }
 
     def api_ledger_tag__get_get__api__fiscal_fiscal_id__ledger_tag(
         self,
@@ -255,6 +288,36 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
     def test_get_lines(self) -> None:
         payload = self.workflow.get_lines(2265976208)
         self.assertEqual(payload["Entities"][0]["LedgerId"], 2265976208)
+
+    def test_get_partner_payment_suggestions_filters_by_context_type(self) -> None:
+        payload = self.workflow.get_partner_payment_suggestions(
+            "mps",
+            per_date="2026-04-13",
+            context_type="supplier",
+            include_manual_payment=True,
+            force_no_paging=True,
+        )
+
+        self.assertEqual(payload["Count"], 2)
+        entities = payload["Entities"]
+        self.assertEqual(len(entities), 2)
+        self.assertTrue(all(str(row.get("PostType", "")).startswith("PartnerPostType_Supplier") for row in entities))
+
+        self.assertIsNotNone(self.finance.last_payment_suggestion_call)
+        call = self.finance.last_payment_suggestion_call or {}
+        self.assertEqual(call.get("query_string"), "mps")
+        self.assertEqual(call.get("per_date"), 20556)
+
+    def test_apply_settled_partner_posts_hydrates_expected_fields(self) -> None:
+        dto = {"LedgerLineType": "LedgerLineType_PartnerPayment"}
+        hydrated = self.workflow.apply_settled_partner_posts(
+            dto,
+            settled_partner_post_ids=[2937818664],
+            partial_settle_id=2937818664,
+        )
+
+        self.assertEqual(hydrated["SettledPartnerPosts"], [{"Id": 2937818664}])
+        self.assertEqual(hydrated["PartiallySettledPostId"], 2937818664)
 
     def test_create_update_delete_line(self) -> None:
         created = self.workflow.create_line({"LedgerId": 2265976208})
@@ -415,6 +478,26 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
                     "description": "missing account",
                 }
             )
+
+    def test_create_lines_convenience_partnerpayment_allows_settled_posts(self) -> None:
+        self.workflow.set_ledger_by_name("Bank2Xena")
+        result = self.workflow.create_lines_convenience(
+            {
+                "date": "2026-04-13",
+                "type": "partnerpayment",
+                "amount": 1859.38,
+                "partner_number": 20001,
+                "account": 1920,
+                "settled_partner_post_ids": [2937818664],
+                "partial_settle_id": 2937818664,
+                "description": "Partnerbetaling: 20001",
+            }
+        )
+
+        self.assertEqual(result["LineCount"], 1)
+        line = result["Lines"][0]["Updated"]
+        self.assertEqual(line["SettledPartnerPosts"], [{"Id": 2937818664}])
+        self.assertEqual(line["PartiallySettledPostId"], 2937818664)
 
     def test_get_convenience_dto_help(self) -> None:
         help_data = self.workflow.get_convenience_dto_help()

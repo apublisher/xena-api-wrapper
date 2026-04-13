@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from ...core import DateInput, to_fiscal_date_int
 from ..utils import LedgerListWorkflow
@@ -46,9 +46,16 @@ class VoucherDraftWorkflow:
         "contra_account",
         "vatnumber",
         "partner_number",
+        "settled_partner_post_ids",
+        "partial_settle_id",
     }
 
     _CONVENIENCE_REQUIRED_KEYS = {"date", "amount"}
+
+    _CONTEXT_TYPE_ALIASES: ClassVar[dict[str, str]] = {
+        "customer": "ContextType_Customer",
+        "supplier": "ContextType_Supplier",
+    }
 
     def get_modified_history(
         self,
@@ -136,6 +143,83 @@ class VoucherDraftWorkflow:
                 query_string=query_string,
                 **base_kwargs,
             )
+
+    def get_partner_payment_suggestions(
+        self,
+        query_string: str,
+        *,
+        per_date: DateInput | None = None,
+        include_manual_payment: bool = True,
+        context_type: str | None = None,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 30,
+        force_no_paging: bool = False,
+    ) -> Any:
+        payload = self._client.finance.api_payment__get_payment_suggestion_get__api__fiscal_fiscal_id__payment__unsettled_post(
+            query_string=query_string,
+            fiscal_id=self._fiscal_id,
+            per_date=to_fiscal_date_int(per_date) if per_date is not None else None,
+            include_manual_payment=include_manual_payment,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+
+        normalized_context = self._normalize_context_type(context_type)
+        if normalized_context is None:
+            return payload
+
+        payload_dict = self._as_dict(payload)
+        entities_obj = payload_dict.get("Entities")
+        entities = entities_obj if isinstance(entities_obj, list) else []
+
+        if normalized_context == "ContextType_Customer":
+            filtered = [
+                row
+                for row in entities
+                if isinstance(row, dict)
+                and str(row.get("PostType", "")).startswith("PartnerPostType_Customer")
+            ]
+        else:
+            filtered = [
+                row
+                for row in entities
+                if isinstance(row, dict)
+                and str(row.get("PostType", "")).startswith("PartnerPostType_Supplier")
+            ]
+
+        output = dict(payload_dict)
+        output["Entities"] = filtered
+        output["Count"] = len(filtered)
+        return output
+
+    def apply_settled_partner_posts(
+        self,
+        dto: dict[str, Any],
+        *,
+        settled_partner_post_ids: list[int],
+        partial_settle_id: int | None = None,
+    ) -> dict[str, Any]:
+        if not settled_partner_post_ids:
+            raise VoucherDraftValidationError("settled_partner_post_ids cannot be empty")
+
+        normalized_ids: list[int] = []
+        for post_id in settled_partner_post_ids:
+            if not isinstance(post_id, int):
+                raise VoucherDraftValidationError("settled_partner_post_ids must contain only integers")
+            normalized_ids.append(post_id)
+
+        updated = dict(dto)
+        updated["SettledPartnerPosts"] = [{"Id": post_id} for post_id in normalized_ids]
+
+        if partial_settle_id is not None:
+            if not isinstance(partial_settle_id, int):
+                raise VoucherDraftValidationError("partial_settle_id must be an integer when provided")
+            updated["PartiallySettledPostId"] = partial_settle_id
+
+        return updated
 
     def create_line(self, dto: dict[str, Any], *, ensure_xena_ui_is_happy: bool | None = None) -> Any:
         created_raw = self._create_line_raw(dto)
@@ -468,6 +552,21 @@ class VoucherDraftWorkflow:
             payload["PartnerId"] = partner_id
             payload["PartnerAccountNumber"] = str(partner_number)
 
+        settled_partner_post_ids = entry.get("settled_partner_post_ids")
+        if settled_partner_post_ids is not None:
+            if not isinstance(settled_partner_post_ids, list):
+                raise VoucherDraftValidationError("settled_partner_post_ids must be a list of integers")
+
+            partial_settle_id = entry.get("partial_settle_id")
+            if partial_settle_id is not None and not isinstance(partial_settle_id, int):
+                raise VoucherDraftValidationError("partial_settle_id must be an integer when provided")
+
+            payload = self.apply_settled_partner_posts(
+                payload,
+                settled_partner_post_ids=cast(list[int], settled_partner_post_ids),
+                partial_settle_id=cast(int | None, partial_settle_id),
+            )
+
         return payload
 
     @staticmethod
@@ -563,6 +662,17 @@ class VoucherDraftWorkflow:
             if isinstance(value, str) and value.isdigit():
                 return int(value)
         return None
+
+    @classmethod
+    def _normalize_context_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if cleaned.startswith("ContextType_"):
+            return cleaned
+        return cls._CONTEXT_TYPE_ALIASES.get(cleaned.lower(), cleaned)
 
     def _resolve_partner_id(self, partner_number: Any) -> int:
         partner_number_str = str(partner_number).strip()

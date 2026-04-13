@@ -984,6 +984,42 @@ class XenaApiWrapper:
             page_size=page_size,
         )
 
+    def get_voucher_draft_partner_payment_suggestions(
+        self,
+        query_string: str,
+        *,
+        per_date: DateInput | None = None,
+        include_manual_payment: bool = True,
+        context_type: str | None = None,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 30,
+        force_no_paging: bool = False,
+    ) -> Any:
+        return self.voucher_draft.get_partner_payment_suggestions(
+            query_string,
+            per_date=per_date,
+            include_manual_payment=include_manual_payment,
+            context_type=context_type,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+            force_no_paging=force_no_paging,
+        )
+
+    def apply_voucher_draft_settled_partner_posts(
+        self,
+        dto: dict[str, Any],
+        *,
+        settled_partner_post_ids: list[int],
+        partial_settle_id: int | None = None,
+    ) -> dict[str, Any]:
+        return self.voucher_draft.apply_settled_partner_posts(
+            dto,
+            settled_partner_post_ids=settled_partner_post_ids,
+            partial_settle_id=partial_settle_id,
+        )
+
     def create_voucher_draft_line(self, dto: dict[str, Any]) -> Any:
         return self.voucher_draft.create_line(dto)
 

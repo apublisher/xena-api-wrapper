@@ -277,6 +277,63 @@ summary = wrapper.preview_voucher_draft_summary(
 
 The draft voucher workflow intentionally targets draft-safe operations and does not call the bookkeeping/approve endpoint.
 
+### Kassekladd partner payment with open-posting settlement
+
+You can now capture unsettled candidate postings and attach the selected posting id(s)
+directly on a draft partner-payment line.
+
+```python
+from xena_api_wrappers import XenaApiWrapper
+
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+wrapper.set_voucher_draft_ledger_by_name("Finans")
+
+# 1) Search unsettled postings used by Kassekladd partner-payment lookup.
+#    context_type supports aliases: "customer" / "supplier".
+suggestions = wrapper.get_voucher_draft_partner_payment_suggestions(
+	"10008",                     # query string (partner number/name/invoice number)
+	per_date="2026-03-31",      # balance date used by lookup
+	context_type="customer",
+	include_manual_payment=True,
+	force_no_paging=True,
+)
+
+# 2) Pick target posting id from suggestions (example known id for voucher 100240).
+selected_post_id = 2937818664
+
+# 3) Create partner-payment draft line and attach settlement references.
+result = wrapper.create_voucher_draft_lines_convenience(
+	{
+		"date": "2026-03-31",
+		"type": "partnerpayment",
+		"amount": 1859.38,
+		"partner_number": 10008,
+		"account": 1920,  # bank/account posting tag for partnerpayment
+		"settled_partner_post_ids": [selected_post_id],
+		"partial_settle_id": selected_post_id,
+		"description": "Partnerbetaling: 10008",
+	}
+)
+```
+
+Important behavior:
+- `partnerpayment` does not use `contra_account`; use `account` (for example `1920`).
+- You must resolve unsettled posting id(s) first, then set them in `settled_partner_post_ids`.
+- Amount is still the payment amount on the line, but settlement linkage is driven by posting id(s).
+- Settlement linkage is persisted on the draft line (`SettledPartnerPosts` / `PartiallySettledPostId`),
+  not as a separate immediate pay call during draft editing.
+
+Additional helper:
+
+```python
+# If you already have a DTO and want to inject settlement references explicitly.
+dto = wrapper.apply_voucher_draft_settled_partner_posts(
+	dto={"LedgerLineType": "LedgerLineType_PartnerPayment"},
+	settled_partner_post_ids=[2937818664],
+	partial_settle_id=2937818664,
+)
+```
+
 ## Order invoice and distribution convenience
 
 Use the high-level helper when you want one call for:
