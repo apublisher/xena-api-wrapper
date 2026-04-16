@@ -82,7 +82,14 @@ class _FakeFinance:
             list_options_page_size,
             list_options_force_no_paging,
         )
-        return {"Count": 1, "Entities": [{"Id": 3037274927, "LedgerId": id}]}
+        return {
+            "Count": 3,
+            "Entities": [
+                {"Id": 3037274927, "LedgerId": id, "VoucherId": None, "IsDeactivated": False},
+                {"Id": 3037274928, "LedgerId": id, "VoucherId": 999, "IsDeactivated": False},
+                {"Id": 3037274929, "LedgerId": id, "VoucherId": None, "IsDeactivated": True},
+            ],
+        }
 
     def api_ledger_line__post_post__api__fiscal_fiscal_id__ledger_line(
         self, dto: dict[str, Any], fiscal_id: str
@@ -288,6 +295,25 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
     def test_get_lines(self) -> None:
         payload = self.workflow.get_lines(2265976208)
         self.assertEqual(payload["Entities"][0]["LedgerId"], 2265976208)
+
+    def test_get_unbooked_lines_by_ledger_id(self) -> None:
+        payload = self.workflow.get_unbooked_lines(ledger_id=2265976208, force_no_paging=True)
+        self.assertEqual(payload["LedgerId"], 2265976208)
+        self.assertEqual(payload["Count"], 1)
+        self.assertEqual(payload["Entities"][0]["Id"], 3037274927)
+
+    def test_get_unbooked_lines_by_ledger_description(self) -> None:
+        payload = self.workflow.get_unbooked_lines(ledger_description="Bank2Xena", force_no_paging=True)
+        self.assertEqual(payload["LedgerId"], 2265976208)
+        self.assertEqual(payload["Count"], 1)
+
+    def test_get_unbooked_lines_can_include_deactivated(self) -> None:
+        payload = self.workflow.get_unbooked_lines(
+            ledger_id=2265976208,
+            force_no_paging=True,
+            exclude_deactivated=False,
+        )
+        self.assertEqual(payload["Count"], 2)
 
     def test_get_partner_payment_suggestions_filters_by_context_type(self) -> None:
         payload = self.workflow.get_partner_payment_suggestions(

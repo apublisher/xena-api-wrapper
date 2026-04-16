@@ -144,6 +144,49 @@ class VoucherDraftWorkflow:
                 **base_kwargs,
             )
 
+    def get_unbooked_lines(
+        self,
+        *,
+        ledger_id: int | None = None,
+        ledger_description: str | None = None,
+        query_string: str | None = None,
+        force_no_paging: bool = True,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        exclude_deactivated: bool = True,
+    ) -> dict[str, Any]:
+        resolved_ledger_id = self.resolve_ledger_id(
+            ledger_id=ledger_id,
+            ledger_description=ledger_description,
+        )
+
+        payload = self.get_lines(
+            resolved_ledger_id,
+            query_string=query_string,
+            force_no_paging=force_no_paging,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+        )
+        payload_dict = self._as_dict(payload)
+        entities_obj = payload_dict.get("Entities")
+        entities = entities_obj if isinstance(entities_obj, list) else []
+
+        unbooked = [
+            cast(dict[str, Any], row)
+            for row in entities
+            if isinstance(row, dict)
+            and row.get("VoucherId") is None
+            and (not exclude_deactivated or row.get("IsDeactivated") is not True)
+        ]
+
+        result = dict(payload_dict)
+        result["LedgerId"] = resolved_ledger_id
+        result["Entities"] = unbooked
+        result["Count"] = len(unbooked)
+        return result
+
     def get_partner_payment_suggestions(
         self,
         query_string: str,

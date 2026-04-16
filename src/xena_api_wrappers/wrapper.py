@@ -984,6 +984,29 @@ class XenaApiWrapper:
             page_size=page_size,
         )
 
+    def get_voucher_draft_unbooked_lines(
+        self,
+        *,
+        ledger_id: int | None = None,
+        ledger_description: str | None = None,
+        query_string: str | None = None,
+        force_no_paging: bool = True,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        exclude_deactivated: bool = True,
+    ) -> dict[str, Any]:
+        return self.voucher_draft.get_unbooked_lines(
+            ledger_id=ledger_id,
+            ledger_description=ledger_description,
+            query_string=query_string,
+            force_no_paging=force_no_paging,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+            exclude_deactivated=exclude_deactivated,
+        )
+
     def get_voucher_draft_partner_payment_suggestions(
         self,
         query_string: str,
