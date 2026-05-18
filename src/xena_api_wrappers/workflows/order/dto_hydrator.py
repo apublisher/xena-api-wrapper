@@ -24,6 +24,9 @@ class OrderDtoHydrator:
     Field conventions
     - Business-friendly line aliases are normalized to API-oriented keys.
     - set_article(...) uses UnitNetPrice, while normalized convenience lines primarily use PriceEach.
+        - set_description(...) maps to order-header Description.
+        - For order-details UI text blocks, task payload helpers map to OrderTask fields:
+            Description (visible description), Details (visible note).
     - Raw mutate helpers (hydrate/set_field) intentionally bypass normalization and may set any key/value directly.
     """
 
@@ -197,16 +200,83 @@ class OrderDtoHydrator:
         *,
         internal_note: str | None = None,
         delivery_note: str | None = None,
+        partner_note: str | None = None,
     ) -> "OrderDtoHydrator":
+        """Set order-header note fields.
+
+        This does not target OrderTask note/description fields used in the order-details UI block.
+        """
         if internal_note is not None:
             self._dto["InternalNote"] = internal_note
         if delivery_note is not None:
             self._dto["DeliveryNote"] = delivery_note
+        if partner_note is not None:
+            self._dto["PartnerNote"] = partner_note
         return self
 
     def set_description(self, description: str) -> "OrderDtoHydrator":
+        """Set order-header Description (legacy-compatible behavior)."""
         self._dto["Description"] = description
         return self
+
+    def set_order_header_description(self, description: str) -> "OrderDtoHydrator":
+        """Explicit alias for order-header Description."""
+        return self.set_description(description)
+
+    def set_order_header_fields(
+        self,
+        *,
+        description: str | None = None,
+        internal_note: str | None = None,
+        delivery_note: str | None = None,
+        partner_note: str | None = None,
+    ) -> "OrderDtoHydrator":
+        """Set order-header description/note fields with explicit naming."""
+        if description is not None:
+            self._dto["Description"] = description
+        return self.set_notes(
+            internal_note=internal_note,
+            delivery_note=delivery_note,
+            partner_note=partner_note,
+        )
+
+    def set_order_task_fields(
+        self,
+        *,
+        description: str | None = None,
+        details: str | None = None,
+        internal_note: str | None = None,
+    ) -> "OrderDtoHydrator":
+        """Set task DTO fields (for OrderTask update payloads).
+
+        Mapping note:
+        - Xena order-details UI description -> OrderTask.Description
+        - Xena order-details UI note -> OrderTask.Details
+        """
+        patch = self.build_order_task_patch(
+            description=description,
+            details=details,
+            internal_note=internal_note,
+        )
+        self._dto.update(patch)
+        return self
+
+    @staticmethod
+    def build_order_task_patch(
+        *,
+        description: str | None = None,
+        details: str | None = None,
+        internal_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a minimal order-task patch dict for task update calls."""
+        patch: dict[str, Any] = {}
+        if description is not None:
+            patch["Description"] = description
+        if details is not None:
+            patch["Details"] = details
+        if internal_note is not None:
+            patch["InternalNote"] = internal_note
+        return patch
 
     def set_delivery_contact(
         self,
@@ -676,6 +746,7 @@ class OrderDtoHydrator:
                 "Description",
                 "InternalNote",
                 "DeliveryNote",
+                "PartnerNote",
                 "OurReference",
                 "YourReference",
                 "DeliveryAddress",
@@ -683,6 +754,11 @@ class OrderDtoHydrator:
                 "DeliveryTitle",
                 "DeliveryPhone",
                 "DeliveryEmail",
+            ],
+            "task_patch_keys_common": [
+                "Description",
+                "Details",
+                "InternalNote",
             ],
             "article_collection_key_default": "OrderTaskLines",
             "article_line_keys_common": [
@@ -707,6 +783,9 @@ class OrderDtoHydrator:
                 "Use set_order_line/edit_order_line/remove_order_line to fully manage line state.",
                 "Use set_order_line_pricing(...) with explicit discount_pct/net_total when discount/total control is needed.",
                 "set_article(...) uses UnitNetPrice, while convenience line normalization maps unit_net_price to PriceEach.",
+                "set_description(...) and set_notes(...) target order-header fields.",
+                "Order details UI text is task-level: Description (visible description) and Details (visible note).",
+                "Use build_order_task_patch(...) / set_order_task_fields(...) for task update payloads.",
                 "Field names follow observed/generated API patterns and may require additional keys per fiscal setup.",
             ],
         }

@@ -20,7 +20,7 @@ class OrderAmbiguousError(OrderReadError):
 
 @dataclass
 class OrderReadWorkflow:
-    """Read-only workflow helper for order and invoice retrieval endpoints."""
+    """Read-only workflow helper for order, invoice, and task retrieval endpoints."""
 
     _client: Any
     _fiscal_id: str
@@ -209,6 +209,63 @@ class OrderReadWorkflow:
             raise OrderNotFoundError(f"No invoiced order found for invoice number '{lookup}'")
 
         return order_dict
+
+    def get_tasks_by_order(self, order_id: int) -> list[dict[str, Any]]:
+        """Return task entities for one order id."""
+        payload = self._client.order.api_order_task__get_by_order_get__api__fiscal_fiscal_id__order_id__order_task(
+            id=order_id,
+            fiscal_id=self._fiscal_id,
+            list_options_force_no_paging=True,
+        )
+        return self._extract_entities(payload, label="Order task")
+
+    def get_task_by_id(self, task_id: int) -> dict[str, Any]:
+        """Return a single order task by id using generated API naming fallbacks."""
+        candidates = [
+            "api_order_task__get_get__api__fiscal_fiscal_id__order_task_id",
+            "api_order_task__get_get__api__fiscal_fiscal_id__order_task__id",
+        ]
+        for candidate in candidates:
+            method = getattr(self._client.order, candidate, None)
+            if callable(method):
+                return self._as_dict(
+                    method(
+                        id=task_id,
+                        fiscal_id=self._fiscal_id,
+                    ),
+                    label="Order task",
+                )
+
+        raise OrderReadError(
+            "Order-task get-by-id endpoint is not available on the configured client"
+        )
+
+    def resolve_primary_task(
+        self,
+        order_id: int,
+        *,
+        on_multiple: str = "raise",
+    ) -> dict[str, Any]:
+        """Resolve primary task for an order with explicit multi-task behavior.
+
+        on_multiple:
+        - "raise": raise OrderAmbiguousError when more than one task exists.
+        - "first": return the first task entity.
+        """
+        tasks = self.get_tasks_by_order(order_id)
+        if not tasks:
+            raise OrderNotFoundError(f"No order task found for order id {order_id}")
+
+        if len(tasks) > 1:
+            if on_multiple == "first":
+                return tasks[0]
+            if on_multiple != "raise":
+                raise OrderReadError("on_multiple must be one of: raise, first")
+            raise OrderAmbiguousError(
+                f"More than one order task matched order id {order_id}"
+            )
+
+        return tasks[0]
 
     def resolve_one(
         self,

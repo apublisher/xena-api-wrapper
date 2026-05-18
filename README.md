@@ -365,6 +365,18 @@ result = wrapper.create_and_send_invoice_simple(
 order_number = result["create"]["order"]["OrderNumber"]
 ```
 
+Optional task-level fields in the same flow:
+
+```python
+result = wrapper.create_and_send_invoice_simple(
+	customer_account_number=10010,
+	order_date="15.04.2026",
+	lines=[{"article_number": 1020, "quantity": 1, "price_each": 1}],
+	task_description="Visible description in order details",
+	task_details="Visible note in order details",
+)
+```
+
 Email distribution:
 
 ```python
@@ -410,6 +422,44 @@ When skipped:
 - `distribution_requested` is the caller input (`email`/`ehf`)
 - `distribution_effective` becomes `none`
 - `distribution_skipped_reason` contains a human-readable reason
+
+## Order details description/note mapping (release note: 2026-05-18)
+
+Verified mapping for the order details UI block:
+- Visible description maps to `OrderTask.Description`
+- Visible note maps to `OrderTask.Details`
+
+Order header fields are still supported and unchanged for compatibility:
+- `Order.Description`
+- `Order.DeliveryNote`
+- `Order.InternalNote`
+- `Order.PartnerNote`
+
+New helper usage:
+
+```python
+# Resolve task(s)
+tasks = wrapper.get_order_tasks_by_order(order_id=200274)
+primary_task = wrapper.resolve_primary_order_task(order_id=200274)
+
+# Update task directly
+wrapper.update_order_task_fields(
+	task_id=primary_task["Id"],
+	description="Visible description",
+	details="Visible note",
+)
+
+# Or update primary task by order id in one call
+wrapper.update_primary_order_task_for_order(
+	order_id=200274,
+	description="Visible description",
+	details="Visible note",
+)
+```
+
+Conflict behavior on multi-task orders is explicit:
+- `on_multiple="raise"` (default) prevents silent wrong-task updates.
+- `on_multiple="first"` allows deterministic first-task fallback.
 
 ## Partner usage
 

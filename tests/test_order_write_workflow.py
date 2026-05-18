@@ -6,6 +6,7 @@ from typing import Any
 
 from xena_api_wrappers.workflows.order.order_write import (
     OrderDistributionError,
+    OrderWriteError,
     OrderWriteHydrationError,
     OrderWriteWorkflow,
 )
@@ -55,6 +56,8 @@ class _FakeOrderApi:
         self.created_lines: list[dict[str, Any]] = []
         self.last_send_electronic_data: dict[str, Any] | None = None
         self.last_pay_data: dict[str, Any] | None = None
+        self.last_task_update_data: dict[str, Any] | None = None
+        self.last_task_update_id: int | str | None = None
         self.journal_entities: list[dict[str, Any]] = [
             {
                 "Id": 3038320382,
@@ -96,6 +99,10 @@ class _FakeOrderApi:
         }
         self.order_tasks_by_order_id: dict[int, list[dict[str, Any]]] = {
             4100: [{"Id": 9100, "Description": "Invoice task"}]
+        }
+        self.order_tasks_by_id: dict[int, dict[str, Any]] = {
+            9100: {"Id": 9100, "OrderId": 4100, "Description": "Invoice task"},
+            9001: {"Id": 9001, "OrderId": 4001, "Description": "Created task"},
         }
         self.order_task_journals: dict[int, list[dict[str, Any]]] = {
             9100: [{"VoucherNumber": 100276}]
@@ -258,6 +265,40 @@ class _FakeOrderApi:
         if id in self.order_tasks_by_order_id:
             return {"Entities": list(self.order_tasks_by_order_id[id])}
         return {"Entities": [{"Id": 9001}]}
+
+    def api_order_task__put_put__api__fiscal_fiscal_id__order_task_id(
+        self,
+        fiscal_id: str,
+        id: int | str,
+        order_task_dto: dict[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        task_id = int(id)
+        self.last_task_update_id = id
+        self.last_task_update_data = dict(order_task_dto)
+        existing = dict(self.order_tasks_by_id.get(task_id, {"Id": task_id}))
+        existing.update(order_task_dto)
+        self.order_tasks_by_id[task_id] = existing
+        return existing
+
+    def api_order_task__get_get__api__fiscal_fiscal_id__order_task_id(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        return dict(
+            self.order_tasks_by_id.get(
+                id,
+                {
+                    "Id": id,
+                    "OrderId": 0,
+                    "Version": 1,
+                },
+            )
+        )
 
     def api_order_task__get_journal_get__api__fiscal_fiscal_id__order_task_id__journal(
         self,
@@ -584,6 +625,47 @@ class OrderWriteWorkflowTests(unittest.TestCase):
         self.assertEqual(dto["DeliveryAddress"]["Zip"], "5258")
         self.assertEqual(dto["DeliveryContactName"], "Gunnar")
 
+    def test_order_header_fields_remain_backward_compatible(self) -> None:
+        hydrator = self.workflow.new_hydrator()
+        hydrator.set_description("Header description")
+        hydrator.set_notes(internal_note="Internal", delivery_note="Delivery", partner_note="Partner")
+
+        dto = hydrator.to_dict()
+        self.assertEqual(dto["Description"], "Header description")
+        self.assertEqual(dto["InternalNote"], "Internal")
+        self.assertEqual(dto["DeliveryNote"], "Delivery")
+        self.assertEqual(dto["PartnerNote"], "Partner")
+
+    def test_update_task_fields_updates_visible_description(self) -> None:
+        updated = self.workflow.update_task_fields(9001, description="UI description")
+        self.assertEqual(updated["Description"], "UI description")
+        assert self.api.last_task_update_data is not None
+        self.assertEqual(self.api.last_task_update_data["Description"], "UI description")
+        self.assertEqual(self.api.last_task_update_data["Id"], 9001)
+
+    def test_update_task_fields_updates_visible_note(self) -> None:
+        updated = self.workflow.update_task_fields(9001, details="UI note details")
+        self.assertEqual(updated["Details"], "UI note details")
+        assert self.api.last_task_update_data is not None
+        self.assertEqual(self.api.last_task_update_data["Details"], "UI note details")
+        self.assertEqual(self.api.last_task_update_data["Id"], 9001)
+
+    def test_update_primary_task_missing_or_ambiguous_raises(self) -> None:
+        self.api.order_tasks_by_order_id[99999] = []
+        with self.assertRaises(OrderWriteError):
+            self.workflow.update_primary_task_for_order(99999, description="x")
+
+        self.api.order_tasks_by_order_id[4001] = [{"Id": 9001}, {"Id": 9002}]
+        with self.assertRaises(OrderWriteError):
+            self.workflow.update_primary_task_for_order(4001, description="x", on_multiple="raise")
+
+    def test_update_task_invalid_payload_raises(self) -> None:
+        with self.assertRaises(OrderWriteError):
+            self.workflow.update_task(9001, {})
+
+        with self.assertRaises(OrderWriteError):
+            self.workflow.update_task_fields(9001)
+
     def test_hydrator_line_index_validation(self) -> None:
         hydrator = self.workflow.new_hydrator({"OrderTaskLines": []})
         with self.assertRaises(OrderWriteHydrationError):
@@ -835,6 +917,8 @@ class OrderWriteWorkflowTests(unittest.TestCase):
             your_reference="GB",
             order_date="15.04.2026",
             gln_number="995361108",
+            task_description="Visible description",
+            task_details="Visible note",
             lines=[
                 {
                     "article_number": 1020,
@@ -850,6 +934,9 @@ class OrderWriteWorkflowTests(unittest.TestCase):
         self.assertEqual(self.api.last_update_data["OurReference"], "JW")
         self.assertEqual(self.api.last_update_data["YourReference"], "GB")
         self.assertEqual(self.api.last_update_data["GLNNumber"], "995361108")
+        assert self.api.last_task_update_data is not None
+        self.assertEqual(self.api.last_task_update_data["Description"], "Visible description")
+        self.assertEqual(self.api.last_task_update_data["Details"], "Visible note")
         self.assertEqual(len(self.api.created_lines), 1)
 
         created_line = self.api.created_lines[0]

@@ -1080,6 +1080,9 @@ class XenaApiWrapper:
         your_reference: str | None = None,
         order_date: DateInput | None = None,
         gln_number: str | None = None,
+        task_description: str | None = None,
+        task_details: str | None = None,
+        task_internal_note: str | None = None,
         lines: list[dict[str, Any]] | None = None,
         hydrate_partner: bool = True,
         hydrate_articles: bool = True,
@@ -1090,9 +1093,65 @@ class XenaApiWrapper:
             your_reference=your_reference,
             order_date=order_date,
             gln_number=gln_number,
+            task_description=task_description,
+            task_details=task_details,
+            task_internal_note=task_internal_note,
             lines=lines,
             hydrate_partner=hydrate_partner,
             hydrate_articles=hydrate_articles,
+        )
+
+    def get_order_tasks_by_order(self, order_id: int) -> list[dict[str, Any]]:
+        return self.order_read.get_tasks_by_order(order_id)
+
+    def get_order_task_by_id(self, task_id: int) -> dict[str, Any]:
+        return self.order_read.get_task_by_id(task_id)
+
+    def resolve_primary_order_task(
+        self,
+        order_id: int,
+        *,
+        on_multiple: str = "raise",
+    ) -> dict[str, Any]:
+        return self.order_read.resolve_primary_task(order_id, on_multiple=on_multiple)
+
+    def update_order_task(self, task_id: int, task_dto: dict[str, Any]) -> Any:
+        return self.order_write.update_task(task_id, task_dto)
+
+    def update_order_task_fields(
+        self,
+        task_id: int,
+        *,
+        description: str | None = None,
+        details: str | None = None,
+        internal_note: str | None = None,
+        **extra_fields: Any,
+    ) -> dict[str, Any]:
+        return self.order_write.update_task_fields(
+            task_id,
+            description=description,
+            details=details,
+            internal_note=internal_note,
+            **extra_fields,
+        )
+
+    def update_primary_order_task_for_order(
+        self,
+        order_id: int,
+        *,
+        description: str | None = None,
+        details: str | None = None,
+        internal_note: str | None = None,
+        on_multiple: str = "raise",
+        **extra_fields: Any,
+    ) -> dict[str, Any]:
+        return self.order_write.update_primary_task_for_order(
+            order_id,
+            description=description,
+            details=details,
+            internal_note=internal_note,
+            on_multiple=on_multiple,
+            **extra_fields,
         )
 
     def create_and_send_invoice_simple(
@@ -1105,6 +1164,9 @@ class XenaApiWrapper:
         your_reference: str | None = None,
         order_date: DateInput | None = None,
         gln_number: str | None = None,
+        task_description: str | None = None,
+        task_details: str | None = None,
+        task_internal_note: str | None = None,
         email_to_addresses: str | None = None,
         email_subject: str | None = None,
         email_body_text: str | None = None,
@@ -1119,6 +1181,9 @@ class XenaApiWrapper:
             your_reference=your_reference,
             order_date=order_date,
             gln_number=gln_number,
+            task_description=task_description,
+            task_details=task_details,
+            task_internal_note=task_internal_note,
             email_to_addresses=email_to_addresses,
             email_subject=email_subject,
             email_body_text=email_body_text,

@@ -23,7 +23,14 @@ from ..partner.partner import PartnerWorkflow
 
 @dataclass
 class OrderWriteWorkflow:
-    """Write workflow helper for explicit order mutations and transitions."""
+    """Write workflow helper for explicit order and order-task mutations.
+
+    Mapping note for Xena order details UI:
+    - Visible description maps to OrderTask.Description.
+    - Visible note maps to OrderTask.Details.
+    - Order header Description/DeliveryNote/InternalNote/PartnerNote are preserved for
+      backward compatibility and other flows/views.
+    """
 
     _client: Any
     _fiscal_id: str
@@ -126,6 +133,100 @@ class OrderWriteWorkflow:
             id=str(order_id),
         )
 
+    def update_task(self, task_id: int, task_dto: dict[str, Any]) -> Any:
+        """Update one order task using generated API naming/signature fallbacks."""
+        if not isinstance(task_dto, dict):
+            raise OrderWriteError("task_dto must be a dict")
+        if not task_dto:
+            raise OrderWriteError("task_dto must not be empty")
+
+        candidates = [
+            "api_order_task__put_put__api__fiscal_fiscal_id__order_task_id",
+            "api_order_task__put_put__api__fiscal_fiscal_id__order_task__id",
+        ]
+        payload_keys = ["order_task_dto", "task_dto", "order_dto", "create_data"]
+
+        for candidate in candidates:
+            method = getattr(self._client.order, candidate, None)
+            if not callable(method):
+                continue
+
+            for payload_key in payload_keys:
+                for typed_task_id in (task_id, str(task_id)):
+                    try:
+                        return method(
+                            fiscal_id=self._fiscal_id,
+                            id=typed_task_id,
+                            **{payload_key: task_dto},
+                        )
+                    except TypeError:
+                        continue
+
+        raise OrderWriteError(
+            "Order-task update endpoint is not available on the configured client"
+        )
+
+    def update_task_fields(
+        self,
+        task_id: int,
+        *,
+        description: str | None = None,
+        details: str | None = None,
+        internal_note: str | None = None,
+        merge_with_existing: bool = True,
+        **extra_fields: Any,
+    ) -> dict[str, Any]:
+        """Update task-level fields with explicit mapping semantics.
+
+        Mapping note:
+        - Xena order-details UI description -> OrderTask.Description
+        - Xena order-details UI note -> OrderTask.Details
+        """
+        task_patch: dict[str, Any] = {}
+        if description is not None:
+            task_patch["Description"] = description
+        if details is not None:
+            task_patch["Details"] = details
+        if internal_note is not None:
+            task_patch["InternalNote"] = internal_note
+
+        task_patch.update(extra_fields)
+        if not task_patch:
+            raise OrderWriteError("At least one task field must be provided")
+
+        task_dto = dict(task_patch)
+        if merge_with_existing:
+            existing_task = self._get_order_task_by_id(task_id)
+            if existing_task is not None:
+                task_dto = {**existing_task, **task_patch}
+
+        updated = self.update_task(task_id, task_dto)
+        return self._as_dict(updated)
+
+    def update_primary_task_for_order(
+        self,
+        order_id: int,
+        *,
+        description: str | None = None,
+        details: str | None = None,
+        internal_note: str | None = None,
+        on_multiple: str = "raise",
+        **extra_fields: Any,
+    ) -> dict[str, Any]:
+        """Update primary task fields for an order with explicit multi-task behavior."""
+        task = self._resolve_primary_task_entity(order_id, on_multiple=on_multiple)
+        task_id_obj = task.get("Id")
+        if not isinstance(task_id_obj, int):
+            raise OrderWriteError("Unexpected order task response shape: missing integer Id")
+
+        return self.update_task_fields(
+            task_id_obj,
+            description=description,
+            details=details,
+            internal_note=internal_note,
+            **extra_fields,
+        )
+
     # Explicit transition method: moves order into offer flow.
     def offer(self, order_id: int, create_data: dict[str, Any]) -> Any:
         return self._client.order.api_order__put_offer_put__api__fiscal_fiscal_id__order_id__offer(
@@ -202,6 +303,9 @@ class OrderWriteWorkflow:
         your_reference: str | None = None,
         order_date: DateInput | None = None,
         gln_number: str | None = None,
+        task_description: str | None = None,
+        task_details: str | None = None,
+        task_internal_note: str | None = None,
         lines: list[dict[str, Any]] | None = None,
         hydrate_partner: bool = True,
         hydrate_articles: bool = True,
@@ -261,6 +365,16 @@ class OrderWriteWorkflow:
 
         updated_order = self.update_hydrated(order_id_obj, update_hydrator)
 
+        updated_primary_task: dict[str, Any] | None = None
+        if any(value is not None for value in (task_description, task_details, task_internal_note)):
+            updated_primary_task = self.update_primary_task_for_order(
+                order_id_obj,
+                description=task_description,
+                details=task_details,
+                internal_note=task_internal_note,
+                on_multiple="raise",
+            )
+
         created_lines: list[dict[str, Any]] = []
         normalized_lines = hydrator.get_order_lines()
         if normalized_lines:
@@ -270,6 +384,7 @@ class OrderWriteWorkflow:
 
         return {
             "order": self._as_dict(updated_order),
+            "task": updated_primary_task,
             "lines": created_lines,
             "assist": assist,
         }
@@ -284,6 +399,9 @@ class OrderWriteWorkflow:
         your_reference: str | None = None,
         order_date: DateInput | None = None,
         gln_number: str | None = None,
+        task_description: str | None = None,
+        task_details: str | None = None,
+        task_internal_note: str | None = None,
         email_to_addresses: str | None = None,
         email_subject: str | None = None,
         email_body_text: str | None = None,
@@ -304,6 +422,9 @@ class OrderWriteWorkflow:
             your_reference=your_reference,
             order_date=order_date,
             gln_number=gln_number,
+            task_description=task_description,
+            task_details=task_details,
+            task_internal_note=task_internal_note,
             lines=lines,
         )
 
@@ -896,6 +1017,13 @@ class OrderWriteWorkflow:
         return self._as_dict(partner_raw)
 
     def _get_primary_order_task_id(self, order_id: int) -> int:
+        primary_task = self._resolve_primary_task_entity(order_id, on_multiple="first")
+        task_id_obj = primary_task.get("Id")
+        if not isinstance(task_id_obj, int):
+            raise OrderWriteError("Unexpected order task response shape: missing integer Id")
+        return task_id_obj
+
+    def _get_order_tasks_by_order(self, order_id: int) -> list[dict[str, Any]]:
         tasks_payload = self._client.order.api_order_task__get_by_order_get__api__fiscal_fiscal_id__order_id__order_task(
             id=order_id,
             fiscal_id=self._fiscal_id,
@@ -903,19 +1031,44 @@ class OrderWriteWorkflow:
         )
         tasks_dict = self._as_dict(tasks_payload)
         entities_obj = tasks_dict.get("Entities")
-        if not isinstance(entities_obj, list) or not entities_obj:
-            raise OrderWriteError("Could not resolve order task for created order")
-
-        entities = cast(list[Any], entities_obj)
-        first_obj = entities[0]
-        if not isinstance(first_obj, dict):
+        if not isinstance(entities_obj, list):
             raise OrderWriteError("Unexpected order task response shape")
-        first = cast(dict[str, Any], first_obj)
+        return [cast(dict[str, Any], entity) for entity in entities_obj if isinstance(entity, dict)]
 
-        task_id_obj = first.get("Id")
-        if not isinstance(task_id_obj, int):
-            raise OrderWriteError("Unexpected order task response shape: missing integer Id")
-        return task_id_obj
+    def _get_order_task_by_id(self, task_id: int) -> dict[str, Any] | None:
+        candidates = [
+            "api_order_task__get_get__api__fiscal_fiscal_id__order_task_id",
+            "api_order_task__get_get__api__fiscal_fiscal_id__order_task__id",
+        ]
+        for candidate in candidates:
+            method = getattr(self._client.order, candidate, None)
+            if callable(method):
+                return self._as_dict(
+                    method(
+                        id=task_id,
+                        fiscal_id=self._fiscal_id,
+                    )
+                )
+        return None
+
+    def _resolve_primary_task_entity(
+        self,
+        order_id: int,
+        *,
+        on_multiple: str,
+    ) -> dict[str, Any]:
+        tasks = self._get_order_tasks_by_order(order_id)
+        if not tasks:
+            raise OrderWriteError(f"Could not resolve order task for order id {order_id}")
+        if len(tasks) > 1:
+            if on_multiple == "first":
+                return tasks[0]
+            if on_multiple != "raise":
+                raise OrderWriteError("on_multiple must be one of: raise, first")
+            raise OrderWriteError(
+                f"More than one order task matched order id {order_id}; set on_multiple='first' to pick first task"
+            )
+        return tasks[0]
 
     def _create_order_line(self, *, task_id: int, line: dict[str, Any]) -> dict[str, Any]:
         line_dto = dict(line)

@@ -18,6 +18,18 @@ class _FakeOrderApi:
         self.last_get_invoice_kwargs: dict[str, Any] | None = None
         self.last_get_by_partner_id: int | None = None
         self.last_get_invoice_by_partner_id: int | None = None
+        self.order_tasks_by_order_id: dict[int, list[dict[str, Any]]] = {
+            11: [{"Id": 9101, "OrderId": 11, "Description": "Task 11"}],
+            12: [
+                {"Id": 9201, "OrderId": 12, "Description": "Task 12-1"},
+                {"Id": 9202, "OrderId": 12, "Description": "Task 12-2"},
+            ],
+        }
+        self.tasks_by_id: dict[int, dict[str, Any]] = {
+            9101: {"Id": 9101, "OrderId": 11, "Description": "Task 11"},
+            9201: {"Id": 9201, "OrderId": 12, "Description": "Task 12-1"},
+            9202: {"Id": 9202, "OrderId": 12, "Description": "Task 12-2"},
+        }
 
     def api_order__get_get__api__fiscal_fiscal_id__order(self, fiscal_id: str, **kwargs: Any) -> dict[str, Any]:
         self.last_get_kwargs = {"fiscal_id": fiscal_id, **kwargs}
@@ -114,6 +126,27 @@ class _FakeOrderApi:
             entities = [{"Id": 802, "OrderId": 12, "VoucherNumber": 100002}]
         return {"Count": len(entities), "Entities": entities}
 
+    def api_order_task__get_by_order_get__api__fiscal_fiscal_id__order_id__order_task(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        return {"Entities": list(self.order_tasks_by_order_id.get(id, []))}
+
+    def api_order_task__get_get__api__fiscal_fiscal_id__order_task_id(
+        self,
+        id: int,
+        fiscal_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = (fiscal_id, kwargs)
+        task = self.tasks_by_id.get(id)
+        if task is None:
+            return {"Id": id, "OrderId": None}
+        return dict(task)
+
 
 class OrderReadWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -174,6 +207,24 @@ class OrderReadWorkflowTests(unittest.TestCase):
 
         with self.assertRaises(OrderReadError):
             self.workflow.resolve_one(id=11, order_number=200271)
+
+    def test_task_helpers(self) -> None:
+        tasks = self.workflow.get_tasks_by_order(11)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["Id"], 9101)
+
+        task = self.workflow.get_task_by_id(9101)
+        self.assertEqual(task["OrderId"], 11)
+
+    def test_resolve_primary_task_missing_and_ambiguous(self) -> None:
+        with self.assertRaises(OrderNotFoundError):
+            self.workflow.resolve_primary_task(999)
+
+        with self.assertRaises(OrderAmbiguousError):
+            self.workflow.resolve_primary_task(12)
+
+        primary = self.workflow.resolve_primary_task(12, on_multiple="first")
+        self.assertEqual(primary["Id"], 9201)
 
     def test_missing_generated_method_raises(self) -> None:
         workflow = OrderReadWorkflow(SimpleNamespace(order=SimpleNamespace()), "104779")
