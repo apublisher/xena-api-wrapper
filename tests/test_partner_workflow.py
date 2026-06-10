@@ -13,6 +13,7 @@ class _FakePartner:
         self.last_create_dto: dict[str, Any] | None = None
         self.last_update_dto: dict[str, Any] | None = None
         self.last_update_id: str | None = None
+        self.last_delete_id: int | None = None
         self.last_context_create: dict[str, Any] | None = None
         self.last_gln_create: dict[str, Any] | None = None
         self.last_gln_update: dict[str, Any] | None = None
@@ -76,6 +77,11 @@ class _FakePartner:
         self.last_update_dto = dto
         self.last_update_id = id
         return {"Id": int(id), **dto}
+
+    def api_partner__delete_delete__api__fiscal_fiscal_id__partner_id(self, id: int, fiscal_id: str) -> dict[str, Any]:
+        _ = fiscal_id
+        self.last_delete_id = id
+        return {"Id": id, "Deleted": True}
 
     def api_partner__get_by_account_number_get__api__fiscal_fiscal_id__partner__by_account_number_account_number(
         self,
@@ -306,6 +312,11 @@ class PartnerWorkflowTests(unittest.TestCase):
         self.assertEqual(updated["Id"], 555)
         self.assertEqual(self.fake_partner.last_update_id, "555")
         self.assertEqual(self.fake_partner.last_update_dto, {"ShortDescription": "API kundetest 2"})
+
+    def test_delete_partner(self) -> None:
+        deleted = self.workflow.delete(555)
+        self.assertEqual(deleted["Deleted"], True)
+        self.assertEqual(self.fake_partner.last_delete_id, 555)
 
     def test_get_contexts(self) -> None:
         payload = self.workflow.get_contexts(123)

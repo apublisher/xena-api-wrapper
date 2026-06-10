@@ -224,6 +224,12 @@ class PartnerWorkflow:
             id=str(partner_id),
         )
 
+    def delete(self, partner_id: int) -> Any:
+        return self._client.partner.api_partner__delete_delete__api__fiscal_fiscal_id__partner_id(
+            id=partner_id,
+            fiscal_id=self._fiscal_id,
+        )
+
     def get_contexts(
         self,
         partner_id: int,

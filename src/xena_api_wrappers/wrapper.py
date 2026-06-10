@@ -593,6 +593,9 @@ class XenaApiWrapper:
     def update_partner(self, partner_id: int, dto: dict[str, Any]) -> Any:
         return self.partner.update(partner_id, dto)
 
+    def delete_partner(self, partner_id: int) -> Any:
+        return self.partner.delete(partner_id)
+
     def get_partner_contexts(
         self,
         partner_id: int,
