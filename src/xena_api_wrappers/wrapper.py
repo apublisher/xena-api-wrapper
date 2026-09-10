@@ -895,6 +895,27 @@ class XenaApiWrapper:
             force_no_paging=force_no_paging,
         )
 
+    def search_unsettled_posts(
+        self,
+        query_string: str,
+        *,
+        include_manual_payment: bool = True,
+        per_date: DateInput | None = None,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        force_no_paging: bool = True,
+    ) -> Any:
+        return self.partner_ledger.search_unsettled_posts(
+            query_string,
+            include_manual_payment=include_manual_payment,
+            per_date=per_date,
+            show_deactivated=show_deactivated,
+            page=page,
+            page_size=page_size,
+            force_no_paging=force_no_paging,
+        )
+
     def get_currency_difference_tag(self, *, force_no_paging: bool = True) -> dict[str, Any]:
         return self.partner_ledger.get_currency_difference_tag(force_no_paging=force_no_paging)
 

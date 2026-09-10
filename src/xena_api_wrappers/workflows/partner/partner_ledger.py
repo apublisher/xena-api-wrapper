@@ -80,6 +80,17 @@ def _as_decimal(value: Any) -> Decimal:
     raise PartnerLedgerError(f"Unsupported numeric value: {value!r}")
 
 
+def normalize_per_date(value: DateInput | None) -> int | None:
+    """Normalize a per_date input to FiscalDateDays (epoch-day int).
+
+    Accepts None, an int already expressed as FiscalDateDays, or any DateInput
+    (date/datetime/str) supported by to_fiscal_date_int(...).
+    """
+    if value is None:
+        return None
+    return to_fiscal_date_int(value)
+
+
 @dataclass
 class PartnerLedgerWorkflow:
     """Workflow helper for partner-ledger read endpoints."""
@@ -216,6 +227,41 @@ class PartnerLedgerWorkflow:
         return self._client.finance.api_payment__get_unsettled_partner_post_get__api__fiscal_fiscal_id__partner_id__unsettled_post(
             id=partner_id,
             fiscal_id=self._fiscal_id,
+            list_options_show_deactivated=show_deactivated,
+            list_options_page=page,
+            list_options_page_size=page_size,
+            list_options_force_no_paging=force_no_paging,
+        )
+
+    def search_unsettled_posts(
+        self,
+        query_string: str,
+        *,
+        include_manual_payment: bool = True,
+        per_date: DateInput | None = None,
+        show_deactivated: bool = False,
+        page: int = 0,
+        page_size: int = 100,
+        force_no_paging: bool = True,
+    ) -> Any:
+        """Search unsettled posts across all partners via Payment/UnsettledPost.
+
+        query_string is matched by Xena against post fields such as VoucherNumber,
+        so it can be used to look up open posts by invoice number without knowing
+        partner_id up front.
+
+        per_date is FiscalDateDays: pass an int already expressed as FiscalDateDays,
+        or any DateInput (date/datetime/str) which is converted via normalize_per_date(...).
+        """
+        cleaned_query = query_string.strip() if isinstance(query_string, str) else ""
+        if not cleaned_query:
+            raise PartnerLedgerError("query_string must be a non-empty string")
+
+        return self._client.finance.api_payment__get_payment_suggestion_get__api__fiscal_fiscal_id__payment__unsettled_post(
+            query_string=cleaned_query,
+            fiscal_id=self._fiscal_id,
+            per_date=normalize_per_date(per_date),
+            include_manual_payment=include_manual_payment,
             list_options_show_deactivated=show_deactivated,
             list_options_page=page,
             list_options_page_size=page_size,

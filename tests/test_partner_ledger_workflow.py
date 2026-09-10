@@ -14,6 +14,7 @@ class _FakeFinance:
         self.last_balance_call: dict[str, Any] | None = None
         self.last_unsettled_call: dict[str, Any] | None = None
         self.last_currency_tag_call: dict[str, Any] | None = None
+        self.last_search_unsettled_call: dict[str, Any] | None = None
         self.unsettled_entities: list[dict[str, Any]] = [
             {
                 "Id": 3020754398,
@@ -121,6 +122,44 @@ class _FakeFinance:
             "force_no_paging": list_options_force_no_paging,
         }
         return {"Count": len(self.unsettled_entities), "Entities": list(self.unsettled_entities)}
+
+    def api_payment__get_payment_suggestion_get__api__fiscal_fiscal_id__payment__unsettled_post(
+        self,
+        query_string: str,
+        fiscal_id: str,
+        per_date: int | None = None,
+        include_manual_payment: bool | None = None,
+        list_options_show_deactivated: bool | None = None,
+        list_options_page: int | None = None,
+        list_options_page_size: int | None = None,
+        list_options_force_no_paging: bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        _ = kwargs
+        self.last_search_unsettled_call = {
+            "query_string": query_string,
+            "fiscal_id": fiscal_id,
+            "per_date": per_date,
+            "include_manual_payment": include_manual_payment,
+            "show_deactivated": list_options_show_deactivated,
+            "page": list_options_page,
+            "page_size": list_options_page_size,
+            "force_no_paging": list_options_force_no_paging,
+        }
+        return {
+            "Count": 1,
+            "Entities": [
+                {
+                    "PartnerId": 1643727442,
+                    "PartnerName": "JARLE WORREN",
+                    "SettledPartnerPostIds": [1854483765],
+                    "VoucherNumbers": "111815",
+                    "PartnerAccountNumber": 12953,
+                    "Amount": 8957.0,
+                    "ManualPayment": False,
+                }
+            ],
+        }
 
     def api_ledger_tag__get_currency_difference_tag_get__api__fiscal_fiscal_id__ledger_tag__currency_difference_tag(
         self,
@@ -369,6 +408,44 @@ class PartnerLedgerWorkflowTests(unittest.TestCase):
                 [3020754398, 9999999999],
                 pay_date="2025-12-19",
             )
+
+    def test_search_unsettled_posts_builds_query_and_defaults(self) -> None:
+        payload = self.workflow.search_unsettled_posts("111815")
+
+        self.assertEqual(payload["Count"], 1)
+        self.assertEqual(payload["Entities"][0]["PartnerId"], 1643727442)
+        self.assertIsNotNone(self.fake_finance.last_search_unsettled_call)
+        call = cast(dict[str, Any], self.fake_finance.last_search_unsettled_call)
+        self.assertEqual(call["query_string"], "111815")
+        self.assertEqual(call["fiscal_id"], "104779")
+        self.assertEqual(call["include_manual_payment"], True)
+        self.assertIsNone(call["per_date"])
+        self.assertEqual(call["force_no_paging"], True)
+
+    def test_search_unsettled_posts_include_manual_payment_false(self) -> None:
+        self.workflow.search_unsettled_posts("111815", include_manual_payment=False)
+
+        call = cast(dict[str, Any], self.fake_finance.last_search_unsettled_call)
+        self.assertEqual(call["include_manual_payment"], False)
+
+    def test_search_unsettled_posts_per_date_accepts_int(self) -> None:
+        self.workflow.search_unsettled_posts("111815", per_date=20544)
+
+        call = cast(dict[str, Any], self.fake_finance.last_search_unsettled_call)
+        self.assertEqual(call["per_date"], 20544)
+
+    def test_search_unsettled_posts_per_date_accepts_date(self) -> None:
+        self.workflow.search_unsettled_posts("111815", per_date=date(2025, 12, 31))
+
+        call = cast(dict[str, Any], self.fake_finance.last_search_unsettled_call)
+        self.assertEqual(call["per_date"], 20453)
+
+    def test_search_unsettled_posts_rejects_empty_query_string(self) -> None:
+        with self.assertRaises(PartnerLedgerError):
+            self.workflow.search_unsettled_posts("")
+
+        with self.assertRaises(PartnerLedgerError):
+            self.workflow.search_unsettled_posts("   ")
 
 
 if __name__ == "__main__":

@@ -618,6 +618,29 @@ Full settlement logic (implemented):
 13. `partialSettleId` defaults to the first selected post id unless explicitly provided.
 14. Execute settlement with `wrapper.settle_partner_posts_safe(...)`, which sends validated payload to `PUT /Order/Pay`.
 
+Search unsettled posts globally by invoice number (no `partner_id` required upfront), via
+`GET Payment/UnsettledPost`:
+
+```python
+# query_string is matched against post fields such as VoucherNumber.
+result = wrapper.search_unsettled_posts("111815")
+
+for entity in result["Entities"]:
+	print(entity["PartnerId"], entity["VoucherNumbers"], entity["Amount"])
+
+# include_manual_payment defaults to True; per_date accepts FiscalDateDays int, date, or ISO string.
+result = wrapper.search_unsettled_posts(
+	"111815",
+	include_manual_payment=False,
+	per_date="2025-12-31",
+)
+```
+
+`per_date` is normalized to Xena's `FiscalDateDays` (epoch-day int) the same way as other
+date-accepting methods in this wrapper (`to_fiscal_date_int`/`normalize_per_date`). An empty
+`query_string` raises `PartnerLedgerError` (a `ValueError` subclass).
+
+
 Failure behavior:
 1. Unknown post ids, mixed currency, non-zero sum, missing currency tag, or non-zero ledger adjustment raise `PartnerLedgerError` before write.
 2. API-level validation errors are still returned by Xena if backend state changes between validation and submit.
