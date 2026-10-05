@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 from xena_api_wrappers.workflows.finance.ledger_group_data_detail import (
     LedgerGroupDataDetailError,
@@ -168,9 +169,10 @@ class LedgerGroupDataDetailWorkflowTests(unittest.TestCase):
             )
 
     def test_get_all_accounts_aggregates_and_filters_1000_to_9999(self) -> None:
-        self.fake_finance.api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail = cast(  # type: ignore[attr-defined]
-            Any,
-            lambda **kwargs: {
+        with patch.object(
+            self.fake_finance,
+            "api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail",
+            return_value={
                 "Count": 3,
                 "Entities": [
                     {"AccountNumber": 950, "Description": "Outside low range"},
@@ -178,19 +180,19 @@ class LedgerGroupDataDetailWorkflowTests(unittest.TestCase):
                     {"AccountNumber": 6420, "Description": "Result"},
                 ],
             },
-        )
-
-        accounts = self.workflow.get_all_accounts(
-            date_from="2025-01-01",
-            date_to="2025-01-31",
-        )
+        ):
+            accounts = self.workflow.get_all_accounts(
+                date_from="2025-01-01",
+                date_to="2025-01-31",
+            )
 
         self.assertEqual([a["AccountNumber"] for a in accounts], [1280, 6420])
 
     def test_get_balance_accounts_filters_1000_to_2999(self) -> None:
-        self.fake_finance.api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail = cast(  # type: ignore[attr-defined]
-            Any,
-            lambda **kwargs: {
+        with patch.object(
+            self.fake_finance,
+            "api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail",
+            return_value={
                 "Count": 3,
                 "Entities": [
                     {"AccountNumber": 1280, "Description": "Balance"},
@@ -198,19 +200,19 @@ class LedgerGroupDataDetailWorkflowTests(unittest.TestCase):
                     {"AccountNumber": 3000, "Description": "Result edge"},
                 ],
             },
-        )
-
-        accounts = self.workflow.get_balance_accounts(
-            date_from="2025-01-01",
-            date_to="2025-01-31",
-        )
+        ):
+            accounts = self.workflow.get_balance_accounts(
+                date_from="2025-01-01",
+                date_to="2025-01-31",
+            )
 
         self.assertEqual([a["AccountNumber"] for a in accounts], [1280, 2999])
 
     def test_get_result_accounts_filters_3000_to_9999(self) -> None:
-        self.fake_finance.api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail = cast(  # type: ignore[attr-defined]
-            Any,
-            lambda **kwargs: {
+        with patch.object(
+            self.fake_finance,
+            "api_transaction__get_ledger_group_data_detail_get__api__fiscal_fiscal_id__transaction__ledger_group_data_detail",
+            return_value={
                 "Count": 4,
                 "Entities": [
                     {"AccountNumber": 2999, "Description": "Balance edge"},
@@ -219,12 +221,11 @@ class LedgerGroupDataDetailWorkflowTests(unittest.TestCase):
                     {"AccountNumber": 10000, "Description": "Outside high range"},
                 ],
             },
-        )
-
-        accounts = self.workflow.get_result_accounts(
-            date_from="2025-01-01",
-            date_to="2025-01-31",
-        )
+        ):
+            accounts = self.workflow.get_result_accounts(
+                date_from="2025-01-01",
+                date_to="2025-01-31",
+            )
 
         self.assertEqual([a["AccountNumber"] for a in accounts], [3000, 6420])
 

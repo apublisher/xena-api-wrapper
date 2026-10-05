@@ -16,6 +16,22 @@ Task-oriented Python wrappers built on top of `xena-client`.
 	- Windows development environments
 	- Linux servers (for example Ubuntu 22)
 
+## Typing and local validation
+
+Workflow parameters and parsed results have type annotations. Raw Xena responses
+and open-ended DTO fields intentionally retain `Any` or `dict[str, Any]` so callers
+can access fields that are not modeled by the wrapper. Runtime input validation
+is retained even when annotations already describe the expected type. The package
+includes a PEP 561 `py.typed` marker so type checkers can use these annotations
+when the wrapper is installed in another application.
+
+Run the local regression suite with the Python environment containing the wrapper
+and its dependencies:
+
+```text
+python -m unittest discover -s tests
+```
+
 ## Date/time behavior
 
 - Fiscal dates are handled as epoch-day integers (days since 1970-01-01), matching observed Xena API behavior.
@@ -39,6 +55,110 @@ report = wrapper.ledger_group_data.get_balance_sheet(
 	date_to="2026-01-31",
 )
 ```
+
+## Document-based voucher registration (OAuth required)
+
+The document-based workflow has three distinct entry points:
+
+- `wrapper.registration_inbox`: resource-scoped list, filters and inbox items.
+- `wrapper.voucher_registration`: preview header, cost lines and summary.
+- `wrapper.document`: reusable document metadata, versions and preview URLs.
+
+The inbox and registration workflows live in the existing bookkeeping area.
+They are separate from `wrapper.voucher_draft`, which operates on Kassekladd journals.
+
+All new registration and document operations require bearer authentication.
+An API-key client raises the public `OAuthRequiredError` before making an API
+request. Its `code` is `"oauth_required"` and `requires_oauth` is `True`, allowing
+the calling application to propose OAuth login.
+This is a conservative wrapper requirement for the new areas. The exact API-key
+permissions and relationship between resource identity and OAuth identity have
+not been verified. Existing API-key workflows retain their behavior.
+
+```python
+from xena_api_wrappers import OAuthRequiredError, XenaApiWrapper
+
+# The application obtains the token through its own OAuth login.
+wrapper = XenaApiWrapper(access_token=access_token, fiscal_id=fiscal_id)
+registration = wrapper.voucher_registration
+inbox = wrapper.registration_inbox
+
+# resource_id is the responsible resource selected for the inbox, not fiscal_id.
+payload = inbox.get_all(resource_id=resource_id, page=0, page_size=10)
+items = inbox.get_entities(resource_id=resource_id)
+item = inbox.get_by_id(inbox_id)
+header = registration.get_for_inbox(inbox_id)
+preview_id = header["Id"]
+lines = registration.get_line_entities(preview_id)
+summary = registration.get_summary(preview_id)
+
+header = registration.update_fields(
+    preview_id,
+    fiscal_date="2026-10-01",
+    pay_date="2026-10-15",
+    SupplierInvoiceNumber="INV-123",
+    PartnerId=supplier_id,
+)
+
+line = registration.create_line(preview_id)
+line = registration.update_line_fields(
+    line["Id"], Amount=800, LedgerTagId=ledger_tag_id, VatId=vat_id,
+)
+# Explicit deletion; never performed automatically.
+registration.delete_line(line["Id"])
+
+document = wrapper.document.get_by_id(item["DocumentId"])
+version = wrapper.document.get_last_version(document["Id"])
+preview_url = wrapper.document.get_preview_url(version["Id"], width=1000, page=1)
+# preview_url contains the access token. Do not log or persist it.
+```
+
+Direct `update(preview_id, dto)` and `update_line(line_id, dto)` accept full DTOs
+with matching `Id` and an integer `Version`. Field-update helpers read the current
+DTO and merge changes, preserving unknown fields and the version. Omitted fields
+are preserved; explicit `None` in API-named fields clears a value. Writes are not
+automatically retried, and multi-call helpers are not atomic.
+Field-update helpers reject replacement of identity, version and relation fields;
+use an explicit full DTO for low-level control.
+
+The inbox list keeps the `Count`/`Entities` envelope. `inbox.get_entities` and
+`registration.get_line_entities` return entity lists. `is_new`, `is_parked` and
+`is_all_approved` are independent optional filters; `None` omits a filter.
+The default excludes parked items and uses paging. Reading does not explicitly
+mark items read, change approval state or modify supplier defaults.
+The initial `voucher_registration.get_all`, `get_entities` and `get_inbox_item`
+entry points remain available as delegating compatibility shortcuts; inbox
+transport and filters are implemented only in `registration_inbox`.
+
+Bookkeeping, payment/settlement choices and difference lines are intentionally
+not exposed by this workflow. The underlying client remains available through
+`wrapper.client`; the wrapper is not a security boundary around that client.
+
+`XenaBearerCredentials(access_token=..., fiscal_id=...)` can also be supplied
+through `credentials`. `from_env` accepts `ACCESS_TOKEN` with `FISCAL_ID`, including
+the existing prefix/dotenv options. Setting both `ACCESS_TOKEN` and `API_KEY`
+raises an error rather than silently choosing an authentication method.
+Custom `client_factory` callables retain their two positional arguments: the
+selected secret (API key or access token) and fiscal ID. A custom bearer factory
+must configure an authenticated session.
+
+Login/refresh is the caller's responsibility. `wrapper.set_access_token(new_token)`
+updates the existing client and workflows after an external login/refresh.
+The guard checks the current effective session authentication, not merely the
+constructor argument. It does not validate token expiry or permissions offline;
+server HTTP errors (including 401/403) propagate from the client for the application
+to handle.
+
+### Client gaps observed during capture
+
+- `xena-client` 0.2.0 has no generated methods for
+  `ResourceInboxDocumentRelation/ByResource` or `ResourceInboxDocumentRelation/{id}`.
+  These two reads use its existing authenticated session with the captured query
+  names, an explicit timeout and no redirect following.
+- The generated scaled-image method uses `data.width`/`data.page`, whereas the
+  observed UI uses `width`/`page`, and falls back to `response.text` for image data.
+  The wrapper therefore exposes metadata and a correctly encoded preview URL;
+  it does not use that method for binary document retrieval.
 
 ## Optional dotenv usage
 

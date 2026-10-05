@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 class LedgerAccountError(ValueError):
@@ -54,17 +54,17 @@ class LedgerAccountWorkflow:
         )
 
     def get_entities(self, **kwargs: Any) -> list[dict[str, Any]]:
-        raw = self.get_all(**kwargs)
+        raw: object = self.get_all(**kwargs)
         if isinstance(raw, dict):
-            entities = raw.get("Entities")
+            entities = cast(dict[str, Any], raw).get("Entities")
             if isinstance(entities, list):
-                return [e for e in entities if isinstance(e, dict)]
-        if hasattr(raw, "to_dict"):
-            converted = raw.to_dict()
+                return [cast(dict[str, Any], e) for e in cast(list[object], entities) if isinstance(e, dict)]
+        if hasattr(cast(object, raw), "to_dict"):
+            converted = getattr(cast(object, raw), "to_dict")()
             if isinstance(converted, dict):
-                entities = converted.get("Entities")
+                entities = cast(dict[str, Any], converted).get("Entities")
                 if isinstance(entities, list):
-                    return [e for e in entities if isinstance(e, dict)]
+                    return [cast(dict[str, Any], e) for e in cast(list[object], entities) if isinstance(e, dict)]
         raise LedgerAccountError("Unexpected LedgerAccount response shape: could not read Entities list")
 
     def get_accounts(

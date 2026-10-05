@@ -441,6 +441,10 @@ class PartnerLedgerWorkflowTests(unittest.TestCase):
         self.assertEqual(call["per_date"], 20453)
 
     def test_search_unsettled_posts_rejects_empty_query_string(self) -> None:
+        invalid_query: Any = None
+        with self.assertRaisesRegex(PartnerLedgerError, "query_string must be a non-empty string"):
+            self.workflow.search_unsettled_posts(invalid_query)
+
         with self.assertRaises(PartnerLedgerError):
             self.workflow.search_unsettled_posts("")
 

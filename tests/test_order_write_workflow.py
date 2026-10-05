@@ -122,7 +122,7 @@ class _FakeOrderApi:
     def api_order__post_post__api__fiscal_fiscal_id__order(self, create_data: dict[str, Any], fiscal_id: str, **kwargs: Any) -> dict[str, Any]:
         _ = (fiscal_id, kwargs)
         self.last_create_data = dict(create_data)
-        created = {"Id": 4001, "Version": 1, **create_data}
+        created: dict[str, Any] = {"Id": 4001, "Version": 1, **create_data}
         self.orders_by_id[4001] = {
             "Id": 4001,
             "PartnerAccountNumber": create_data.get("PartnerAccountNumber", 10010),
@@ -198,7 +198,7 @@ class _FakeOrderApi:
         order_meta = self.orders_by_id.get(id, {})
         voucher = self.next_invoice_voucher
         self.next_invoice_voucher += 1
-        invoice_entity = {
+        invoice_entity: dict[str, Any] = {
             "Id": 500000 + id,
             "OrderId": id,
             "OrderNumber": order_meta.get("OrderNumber", 999999),
@@ -381,7 +381,7 @@ class _FakeOrderApi:
         partner_post_ids = [int(x) for x in pay_data.get("partnerPostIds", [])]
         settlement_id = 3038553565
         for entity in self.invoice_entities:
-            if isinstance(entity, dict) and entity.get("Id") in partner_post_ids:
+            if entity.get("Id") in partner_post_ids:
                 entity["IsSettled"] = True
                 entity["SettlementId"] = settlement_id
                 entity["SettledPostAmount"] = entity.get("PostAmount")
@@ -401,8 +401,6 @@ class _FakeFinanceApi:
         _ = (fiscal_id, kwargs)
         entities: list[dict[str, Any]] = []
         for invoice in self._order_api.invoice_entities:
-            if not isinstance(invoice, dict):
-                continue
             if invoice.get("PartnerId") != id:
                 continue
             if invoice.get("IsSettled"):
@@ -660,6 +658,10 @@ class OrderWriteWorkflowTests(unittest.TestCase):
             self.workflow.update_primary_task_for_order(4001, description="x", on_multiple="raise")
 
     def test_update_task_invalid_payload_raises(self) -> None:
+        invalid_payload: Any = "invalid"
+        with self.assertRaisesRegex(OrderWriteError, "task_dto must be a dict"):
+            self.workflow.update_task(9001, invalid_payload)
+
         with self.assertRaises(OrderWriteError):
             self.workflow.update_task(9001, {})
 

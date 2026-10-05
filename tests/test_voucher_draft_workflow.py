@@ -6,6 +6,7 @@ from typing import Any
 
 from xena_api_wrappers.workflows.bookkeeping import (
     VoucherDraftLedgerNotFoundError,
+    VoucherDraftValidationError,
     VoucherDraftWorkflow,
 )
 
@@ -344,6 +345,22 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
 
         self.assertEqual(hydrated["SettledPartnerPosts"], [{"Id": 2937818664}])
         self.assertEqual(hydrated["PartiallySettledPostId"], 2937818664)
+
+    def test_apply_settled_partner_posts_rejects_non_integer_ids(self) -> None:
+        invalid_ids: Any = [2937818664, "invalid"]
+        with self.assertRaisesRegex(
+            VoucherDraftValidationError, "settled_partner_post_ids must contain only integers"
+        ):
+            self.workflow.apply_settled_partner_posts({}, settled_partner_post_ids=invalid_ids)
+
+    def test_apply_settled_partner_posts_rejects_non_integer_partial_id(self) -> None:
+        invalid_id: Any = "invalid"
+        with self.assertRaisesRegex(
+            VoucherDraftValidationError, "partial_settle_id must be an integer when provided"
+        ):
+            self.workflow.apply_settled_partner_posts(
+                {}, settled_partner_post_ids=[2937818664], partial_settle_id=invalid_id
+            )
 
     def test_create_update_delete_line(self) -> None:
         created = self.workflow.create_line({"LedgerId": 2265976208})

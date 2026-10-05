@@ -57,18 +57,18 @@ def _normalize_post_type(value: str | None) -> str | None:
     return alias or cleaned
 
 
-def _extract_entities(raw_payload: Any) -> list[dict[str, Any]]:
+def _extract_entities(raw_payload: object) -> list[dict[str, Any]]:
     if isinstance(raw_payload, dict):
-        entities = raw_payload.get("Entities")
+        entities = cast(dict[str, Any], raw_payload).get("Entities")
         if isinstance(entities, list):
-            return [e for e in entities if isinstance(e, dict)]
-    to_dict = getattr(raw_payload, "to_dict", None)
+            return [cast(dict[str, Any], e) for e in cast(list[object], entities) if isinstance(e, dict)]
+    to_dict = getattr(cast(object, raw_payload), "to_dict", None)
     if callable(to_dict):
         converted = to_dict()
         if isinstance(converted, dict):
-            entities = converted.get("Entities")
+            entities = cast(dict[str, Any], converted).get("Entities")
             if isinstance(entities, list):
-                return [e for e in entities if isinstance(e, dict)]
+                return [cast(dict[str, Any], e) for e in cast(list[object], entities) if isinstance(e, dict)]
     return []
 
 
@@ -253,7 +253,7 @@ class PartnerLedgerWorkflow:
         per_date is FiscalDateDays: pass an int already expressed as FiscalDateDays,
         or any DateInput (date/datetime/str) which is converted via normalize_per_date(...).
         """
-        cleaned_query = query_string.strip() if isinstance(query_string, str) else ""
+        cleaned_query = query_string.strip() if isinstance(cast(object, query_string), str) else ""
         if not cleaned_query:
             raise PartnerLedgerError("query_string must be a non-empty string")
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from ...core import DateInput, to_fiscal_date_int
 from .ledger_group_data import LedgerGroupDataWorkflow
@@ -247,15 +247,15 @@ class LedgerGroupDataDetailWorkflow:
         return self._ledger_group_data_workflow
 
     @staticmethod
-    def _extract_entities(raw_payload: Any) -> list[dict[str, Any]]:
+    def _extract_entities(raw_payload: object) -> list[dict[str, Any]]:
         if isinstance(raw_payload, dict):
-            entities = raw_payload.get("Entities")
+            entities = cast(dict[str, Any], raw_payload).get("Entities")
             if isinstance(entities, list):
-                return [e for e in entities if isinstance(e, dict)]
-        if hasattr(raw_payload, "to_dict"):
-            converted = raw_payload.to_dict()
+                return [cast(dict[str, Any], e) for e in cast(list[object], entities) if isinstance(e, dict)]
+        if hasattr(cast(object, raw_payload), "to_dict"):
+            converted = getattr(cast(object, raw_payload), "to_dict")()
             if isinstance(converted, dict):
-                entities = converted.get("Entities")
+                entities = cast(dict[str, Any], converted).get("Entities")
                 if isinstance(entities, list):
-                    return [e for e in entities if isinstance(e, dict)]
+                    return [cast(dict[str, Any], e) for e in cast(list[object], entities) if isinstance(e, dict)]
         return []

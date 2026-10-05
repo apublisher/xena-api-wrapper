@@ -171,14 +171,14 @@ class VoucherDraftWorkflow:
         )
         payload_dict = self._as_dict(payload)
         entities_obj = payload_dict.get("Entities")
-        entities = entities_obj if isinstance(entities_obj, list) else []
+        entities = cast(list[object], entities_obj) if isinstance(entities_obj, list) else []
 
         unbooked = [
             cast(dict[str, Any], row)
             for row in entities
             if isinstance(row, dict)
-            and row.get("VoucherId") is None
-            and (not exclude_deactivated or row.get("IsDeactivated") is not True)
+            and cast(dict[str, Any], row).get("VoucherId") is None
+            and (not exclude_deactivated or cast(dict[str, Any], row).get("IsDeactivated") is not True)
         ]
 
         result = dict(payload_dict)
@@ -216,21 +216,21 @@ class VoucherDraftWorkflow:
 
         payload_dict = self._as_dict(payload)
         entities_obj = payload_dict.get("Entities")
-        entities = entities_obj if isinstance(entities_obj, list) else []
+        entities = cast(list[object], entities_obj) if isinstance(entities_obj, list) else []
 
         if normalized_context == "ContextType_Customer":
             filtered = [
-                row
+                cast(dict[str, Any], row)
                 for row in entities
                 if isinstance(row, dict)
-                and str(row.get("PostType", "")).startswith("PartnerPostType_Customer")
+                and str(cast(dict[str, Any], row).get("PostType", "")).startswith("PartnerPostType_Customer")
             ]
         else:
             filtered = [
-                row
+                cast(dict[str, Any], row)
                 for row in entities
                 if isinstance(row, dict)
-                and str(row.get("PostType", "")).startswith("PartnerPostType_Supplier")
+                and str(cast(dict[str, Any], row).get("PostType", "")).startswith("PartnerPostType_Supplier")
             ]
 
         output = dict(payload_dict)
@@ -249,7 +249,7 @@ class VoucherDraftWorkflow:
             raise VoucherDraftValidationError("settled_partner_post_ids cannot be empty")
 
         normalized_ids: list[int] = []
-        for post_id in settled_partner_post_ids:
+        for post_id in cast(list[object], settled_partner_post_ids):
             if not isinstance(post_id, int):
                 raise VoucherDraftValidationError("settled_partner_post_ids must contain only integers")
             normalized_ids.append(post_id)
@@ -258,7 +258,7 @@ class VoucherDraftWorkflow:
         updated["SettledPartnerPosts"] = [{"Id": post_id} for post_id in normalized_ids]
 
         if partial_settle_id is not None:
-            if not isinstance(partial_settle_id, int):
+            if not isinstance(cast(object, partial_settle_id), int):
                 raise VoucherDraftValidationError("partial_settle_id must be an integer when provided")
             updated["PartiallySettledPostId"] = partial_settle_id
 
@@ -607,7 +607,7 @@ class VoucherDraftWorkflow:
             payload = self.apply_settled_partner_posts(
                 payload,
                 settled_partner_post_ids=cast(list[int], settled_partner_post_ids),
-                partial_settle_id=cast(int | None, partial_settle_id),
+                partial_settle_id=partial_settle_id,
             )
 
         return payload

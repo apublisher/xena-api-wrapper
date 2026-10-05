@@ -15,7 +15,12 @@ from .bookkeeping import (
 	VoucherDraftLedgerNotFoundError,
 	VoucherDraftValidationError,
 	VoucherDraftWorkflow,
+	VoucherRegistrationError,
+	VoucherRegistrationWorkflow,
+	RegistrationInboxError,
+	RegistrationInboxWorkflow,
 )
+from .document import DocumentError, DocumentWorkflow
 from .partner import (
 	PartnerAddressDTO,
 	PartnerDTO,
@@ -88,6 +93,12 @@ __all__ = [
 	"VoucherDraftLedgerNotFoundError",
 	"VoucherDraftValidationError",
 	"VoucherDraftWorkflow",
+	"VoucherRegistrationError",
+	"VoucherRegistrationWorkflow",
+	"RegistrationInboxError",
+	"RegistrationInboxWorkflow",
+	"DocumentError",
+	"DocumentWorkflow",
 	"PartnerAddressDTO",
 	"PartnerDTO",
 	"PartnerError",

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
+
+from .core.authentication import validate_access_token
+from .core.payloads import non_empty_string
 
 
 @dataclass(frozen=True)
@@ -22,3 +25,25 @@ class XenaCredentials:
             raise ValueError(f"Missing environment variable: {prefix}FISCAL_ID")
 
         return cls(api_key=api_key, fiscal_id=fiscal_id)
+
+
+@dataclass(frozen=True)
+class XenaBearerCredentials:
+    """An existing access token; login and refresh remain the caller's responsibility."""
+
+    access_token: str = field(repr=False)
+    fiscal_id: str
+
+    def __post_init__(self) -> None:
+        validate_access_token(self.access_token)
+        non_empty_string(self.fiscal_id, "fiscal_id")
+
+    @classmethod
+    def from_env(cls, prefix: str = "") -> "XenaBearerCredentials":
+        token = (os.getenv(f"{prefix}ACCESS_TOKEN") or "").strip()
+        fiscal_id = (os.getenv(f"{prefix}FISCAL_ID") or "").strip()
+        if not token:
+            raise ValueError(f"Missing environment variable: {prefix}ACCESS_TOKEN")
+        if not fiscal_id:
+            raise ValueError(f"Missing environment variable: {prefix}FISCAL_ID")
+        return cls(access_token=token, fiscal_id=fiscal_id)

@@ -135,7 +135,7 @@ class OrderWriteWorkflow:
 
     def update_task(self, task_id: int, task_dto: dict[str, Any]) -> Any:
         """Update one order task using generated API naming/signature fallbacks."""
-        if not isinstance(task_dto, dict):
+        if not isinstance(cast(object, task_dto), dict):
             raise OrderWriteError("task_dto must be a dict")
         if not task_dto:
             raise OrderWriteError("task_dto must not be empty")
@@ -616,11 +616,11 @@ class OrderWriteWorkflow:
         target = int(lookup) if lookup.isdigit() else None
         matches = [
             cast(dict[str, Any], entity)
-            for entity in entities_obj
+            for entity in cast(list[object], entities_obj)
             if isinstance(entity, dict)
             and (
-                (target is not None and entity.get("VoucherNumber") == target)
-                or str(entity.get("VoucherNumber", "")).strip() == lookup
+                (target is not None and cast(dict[str, Any], entity).get("VoucherNumber") == target)
+                or str(cast(dict[str, Any], entity).get("VoucherNumber", "")).strip() == lookup
             )
         ]
         if not matches:
@@ -645,14 +645,14 @@ class OrderWriteWorkflow:
             )
             all_dict = self._as_dict(all_payload)
             all_entities_obj = all_dict.get("Entities")
-            all_entities = all_entities_obj if isinstance(all_entities_obj, list) else []
+            all_entities = cast(list[object], all_entities_obj) if isinstance(all_entities_obj, list) else []
             matches = [
                 cast(dict[str, Any], entity)
                 for entity in all_entities
                 if isinstance(entity, dict)
                 and (
-                    (target is not None and entity.get("VoucherNumber") == target)
-                    or str(entity.get("VoucherNumber", "")).strip() == lookup
+                    (target is not None and cast(dict[str, Any], entity).get("VoucherNumber") == target)
+                    or str(cast(dict[str, Any], entity).get("VoucherNumber", "")).strip() == lookup
                 )
             ]
         if not matches:
@@ -684,10 +684,10 @@ class OrderWriteWorkflow:
             raise OrderWriteError("Could not resolve source order tasks for invoice lookup")
 
         matching_task_ids: list[int] = []
-        for task in entities_obj:
+        for task in cast(list[object], entities_obj):
             if not isinstance(task, dict):
                 continue
-            task_id = task.get("Id")
+            task_id = cast(dict[str, Any], task).get("Id")
             if not isinstance(task_id, int):
                 continue
 
@@ -698,9 +698,9 @@ class OrderWriteWorkflow:
             )
             journals_dict = self._as_dict(journals_payload)
             journals_obj = journals_dict.get("Entities")
-            journals = journals_obj if isinstance(journals_obj, list) else []
+            journals = cast(list[object], journals_obj) if isinstance(journals_obj, list) else []
             has_voucher = any(
-                isinstance(journal, dict) and journal.get("VoucherNumber") == voucher_number
+                isinstance(journal, dict) and cast(dict[str, Any], journal).get("VoucherNumber") == voucher_number
                 for journal in journals
             )
             if has_voucher:
@@ -726,7 +726,7 @@ class OrderWriteWorkflow:
         entities_obj = payload_dict.get("Entities")
         if not isinstance(entities_obj, list):
             raise OrderWriteError("Unexpected order line response shape for source task")
-        return [cast(dict[str, Any], line) for line in entities_obj if isinstance(line, dict)]
+        return [cast(dict[str, Any], line) for line in cast(list[object], entities_obj) if isinstance(line, dict)]
 
     def _build_mirrored_lines(self, source_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         mirrored: list[dict[str, Any]] = []
@@ -784,7 +784,7 @@ class OrderWriteWorkflow:
     def _resolve_source_invoice_date_days(self, invoice_entity: dict[str, Any]) -> int:
         journal_obj = invoice_entity.get("Journal")
         if isinstance(journal_obj, dict):
-            invoicing_date_days = journal_obj.get("InvoicingDateDays")
+            invoicing_date_days = cast(dict[str, Any], journal_obj).get("InvoicingDateDays")
             if isinstance(invoicing_date_days, int):
                 return invoicing_date_days
 
@@ -819,8 +819,8 @@ class OrderWriteWorkflow:
 
         matches = [
             cast(dict[str, Any], entity)
-            for entity in entities_obj
-            if isinstance(entity, dict) and entity.get("OrderId") == order_id
+            for entity in cast(list[object], entities_obj)
+            if isinstance(entity, dict) and cast(dict[str, Any], entity).get("OrderId") == order_id
         ]
         if not matches:
             raise OrderWriteError(f"Could not resolve reverse invoice for order id {order_id}")
@@ -873,12 +873,12 @@ class OrderWriteWorkflow:
         )
         unsettled_dict = self._as_dict(unsettled_payload)
         unsettled_obj = unsettled_dict.get("Entities")
-        unsettled_entities = unsettled_obj if isinstance(unsettled_obj, list) else []
+        unsettled_entities = cast(list[object], unsettled_obj) if isinstance(unsettled_obj, list) else []
 
         selected_rows = [
             cast(dict[str, Any], row)
             for row in unsettled_entities
-            if isinstance(row, dict) and row.get("VoucherNumber") in (source_voucher, reverse_voucher)
+            if isinstance(row, dict) and cast(dict[str, Any], row).get("VoucherNumber") in (source_voucher, reverse_voucher)
         ]
         selected_ids = [
             cast(int, row.get("Id"))
@@ -936,7 +936,7 @@ class OrderWriteWorkflow:
         )
         tag_dict = self._as_dict(tag_payload)
         tag_entities_obj = tag_dict.get("Entities")
-        tag_entities = tag_entities_obj if isinstance(tag_entities_obj, list) else []
+        tag_entities = cast(list[object], tag_entities_obj) if isinstance(tag_entities_obj, list) else []
         if not tag_entities or not isinstance(tag_entities[0], dict):
             return {
                 "attempted": False,
@@ -960,7 +960,7 @@ class OrderWriteWorkflow:
         if ledger_tag_number is None:
             ledger_tag_number = tag.get("Number")
 
-        pay_payload = {
+        pay_payload: dict[str, Any] = {
             "ledgerPosts": [
                 {
                     "LedgerTagId": tag_id,
@@ -1033,7 +1033,7 @@ class OrderWriteWorkflow:
         entities_obj = tasks_dict.get("Entities")
         if not isinstance(entities_obj, list):
             raise OrderWriteError("Unexpected order task response shape")
-        return [cast(dict[str, Any], entity) for entity in entities_obj if isinstance(entity, dict)]
+        return [cast(dict[str, Any], entity) for entity in cast(list[object], entities_obj) if isinstance(entity, dict)]
 
     def _get_order_task_by_id(self, task_id: int) -> dict[str, Any] | None:
         candidates = [

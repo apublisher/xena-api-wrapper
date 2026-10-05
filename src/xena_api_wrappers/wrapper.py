@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import os
 from typing import Any
 
-from .core import ClientFactory, DateInput, default_client_factory
-from .credentials import XenaCredentials
+from .core import ClientFactory, DateInput, default_bearer_client_factory, default_client_factory
+from .credentials import XenaBearerCredentials, XenaCredentials
 from .workflows import (
     ArticleWorkflow,
     ArticleGroupWorkflow,
@@ -23,6 +24,9 @@ from .workflows import (
     PartnerWorkflow,
     VoucherDraftWorkflow,
     TransactionWorkflow,
+    VoucherRegistrationWorkflow,
+    RegistrationInboxWorkflow,
+    DocumentWorkflow,
 )
 
 
@@ -35,17 +39,26 @@ class XenaApiWrapper:
         api_key: str | None = None,
         fiscal_id: str | None = None,
         *,
-        credentials: XenaCredentials | None = None,
+        access_token: str | None = None,
+        credentials: XenaCredentials | XenaBearerCredentials | None = None,
         client_factory: ClientFactory | None = None,
     ) -> None:
+        if access_token is not None and (api_key is not None or credentials is not None):
+            raise ValueError("Provide access_token alone with fiscal_id, not api_key or credentials")
+        if credentials is None and access_token is not None:
+            credentials = XenaBearerCredentials(access_token=access_token, fiscal_id=str(fiscal_id or ""))
         if credentials is None:
             if not api_key or not fiscal_id:
                 raise ValueError("Provide either credentials or both api_key and fiscal_id")
             credentials = XenaCredentials(api_key=api_key, fiscal_id=str(fiscal_id))
 
         self._credentials = credentials
-        factory = client_factory or default_client_factory
-        self._client = factory(self._credentials.api_key, self._credentials.fiscal_id)
+        if isinstance(credentials, XenaBearerCredentials):
+            factory = client_factory or default_bearer_client_factory
+            self._client = factory(credentials.access_token, credentials.fiscal_id)
+        else:
+            factory = client_factory or default_client_factory
+            self._client = factory(credentials.api_key, credentials.fiscal_id)
         self._fiscal_period_workflow: FiscalPeriodWorkflow | None = None
         self._ledger_list_workflow: LedgerListWorkflow | None = None
         self._ledger_account_workflow: LedgerAccountWorkflow | None = None
@@ -63,6 +76,9 @@ class XenaApiWrapper:
         self._article_group_workflow: ArticleGroupWorkflow | None = None
         self._order_read_workflow: OrderReadWorkflow | None = None
         self._order_write_workflow: OrderWriteWorkflow | None = None
+        self._voucher_registration_workflow: VoucherRegistrationWorkflow | None = None
+        self._registration_inbox_workflow: RegistrationInboxWorkflow | None = None
+        self._document_workflow: DocumentWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -84,8 +100,22 @@ class XenaApiWrapper:
             dotenv_load = getattr(dotenv_module, "load_dotenv")
             dotenv_load(dotenv_path=dotenv_path)
 
-        creds = XenaCredentials.from_env(prefix=prefix)
+        if (os.getenv(f"{prefix}ACCESS_TOKEN") or "").strip():
+            if (os.getenv(f"{prefix}API_KEY") or "").strip():
+                raise ValueError("Configure either ACCESS_TOKEN or API_KEY, not both")
+            creds: XenaCredentials | XenaBearerCredentials = XenaBearerCredentials.from_env(prefix=prefix)
+        else:
+            creds = XenaCredentials.from_env(prefix=prefix)
         return cls(credentials=creds, client_factory=client_factory)
+
+    def set_access_token(self, access_token: str) -> None:
+        """Use an externally obtained token without recreating existing workflows."""
+        credentials = XenaBearerCredentials(access_token=access_token, fiscal_id=self.fiscal_id)
+        setter = getattr(self._client, "set_access_token", None)
+        if not callable(setter):
+            raise TypeError("The configured client does not support set_access_token")
+        setter(credentials.access_token)
+        self._credentials = credentials
 
     @property
     def client(self) -> Any:
@@ -243,6 +273,26 @@ class XenaApiWrapper:
                 self.ledger,
             )
         return self._voucher_draft_workflow
+
+    @property
+    def registration_inbox(self) -> RegistrationInboxWorkflow:
+        if self._registration_inbox_workflow is None:
+            self._registration_inbox_workflow = RegistrationInboxWorkflow(self._client, self.fiscal_id)
+        return self._registration_inbox_workflow
+
+    @property
+    def voucher_registration(self) -> VoucherRegistrationWorkflow:
+        if self._voucher_registration_workflow is None:
+            self._voucher_registration_workflow = VoucherRegistrationWorkflow(
+                self._client, self.fiscal_id, self.registration_inbox,
+            )
+        return self._voucher_registration_workflow
+
+    @property
+    def document(self) -> DocumentWorkflow:
+        if self._document_workflow is None:
+            self._document_workflow = DocumentWorkflow(self._client, self.fiscal_id)
+        return self._document_workflow
 
     @property
     def article_group(self) -> ArticleGroupWorkflow:
