@@ -61,7 +61,7 @@ report = wrapper.ledger_group_data.get_balance_sheet(
 The document-based workflow has three distinct entry points:
 
 - `wrapper.registration_inbox`: resource-scoped list, filters and inbox items.
-- `wrapper.voucher_registration`: preview header, cost lines and summary.
+- `wrapper.voucher_registration`: preview header, cost lines, summary and explicit bookkeeping.
 - `wrapper.document`: reusable document metadata, versions and preview URLs.
 
 The inbox and registration workflows live in the existing bookkeeping area.
@@ -130,7 +130,44 @@ The initial `voucher_registration.get_all`, `get_entities` and `get_inbox_item`
 entry points remain available as delegating compatibility shortcuts; inbox
 transport and filters are implemented only in `registration_inbox`.
 
-Bookkeeping, payment/settlement choices and difference lines are intentionally
+### Bookkeeping a saved preview
+
+Bookkeeping is an explicit action, separate from draft editing. The application
+decides when to execute it and can inspect `registration.get_summary(preview_id)`
+first. `bookkeep` uses the generated client's `PUT /VoucherPreview/{id}/Bookkeep`
+method without a request body, a readiness preflight or a follow-up lookup.
+
+Duplicate supplier-invoice warnings were observed in
+`summary["BookkeepingResult"]["Warnings"]`, as localized text identifying the
+invoice number and an existing voucher number. The same response had empty
+`Errors` and `IsReadyForBookkeeping: true`: readiness alone does not mean there
+are no duplicate warnings. `get_summary` preserves these fields unchanged.
+The application decides how to present warnings and whether to proceed;
+the wrapper does not parse localized messages or automatically block bookkeeping.
+
+```python
+result = registration.bookkeep(preview_id)
+if result["Success"]:
+    # Refresh the application's inbox; the preview may no longer exist.
+    pass
+else:
+    # HTTP 200 can still carry a business failure. Present the API details.
+    errors = result.get("Errors", [])
+    messages = result.get("Messages", [])
+```
+
+The full result is returned unchanged, including `Success`, `Errors`, `Messages`,
+`StatusCode`, `AssignedId` and any additional fields. A missing or non-boolean
+`Success` raises `VoucherRegistrationError`; `Success: false` is returned for the
+application to handle. HTTP and transport errors propagate. The wrapper does not
+retry: after a timeout, the outcome may be unknown, so verify it before attempting
+another bookkeeping action.
+
+The capture reported success with `AssignedId: -1`, followed by HTTP 404 when
+reading the preview. Do not assume `AssignedId` is the final voucher ID or that the
+preview remains readable. Final voucher lookup is not part of this operation.
+
+Payment/settlement choices and difference lines remain intentionally
 not exposed by this workflow. The underlying client remains available through
 `wrapper.client`; the wrapper is not a security boundary around that client.
 

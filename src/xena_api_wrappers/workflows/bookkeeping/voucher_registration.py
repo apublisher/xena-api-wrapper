@@ -13,7 +13,7 @@ from .registration_inbox import RegistrationInboxWorkflow
 
 @dataclass
 class VoucherRegistrationWorkflow:
-    """Document-based draft registration. Does not bookkeep or modify supplier defaults."""
+    """Document-based registration with explicit bookkeeping and no supplier-default helpers."""
 
     _client: Any
     _fiscal_id: str
@@ -198,6 +198,25 @@ class VoucherRegistrationWorkflow:
             ),
             VoucherRegistrationError, "VoucherPreview summary",
         )
+
+    def bookkeep(self, voucher_preview_id: int) -> dict[str, Any]:
+        """Bookkeep a saved preview once and return the full business result.
+
+        HTTP success does not imply business success; the caller must inspect
+        Success, Errors and Messages. No readiness check or follow-up lookup is
+        performed, and the preview may no longer exist after successful bookkeeping.
+        """
+        require_bearer(self._client)
+        positive_int(voucher_preview_id, "voucher_preview_id")
+        result = as_dict(
+            self._client.finance.api_voucher_preview__put_bookkeep_put__api__fiscal_fiscal_id__voucher_preview_id__bookkeep(
+                id=voucher_preview_id, fiscal_id=self._fiscal_id, timeout=30,
+            ),
+            VoucherRegistrationError, "VoucherPreview bookkeeping",
+        )
+        if not isinstance(result.get("Success"), bool):
+            raise VoucherRegistrationError("Unexpected VoucherPreview bookkeeping response: expected boolean Success")
+        return result
 
     def _get_registration_inbox(self) -> RegistrationInboxWorkflow:
         if self._registration_inbox_workflow is None:

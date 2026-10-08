@@ -122,6 +122,23 @@ class RegistrationTests(_WorkflowTestCase):
         self.assertFalse(summary["BookkeepingResult"]["IsReadyForBookkeeping"])
         self.assertEqual(urlsplit(self.session.calls[-1].url or "").path, "/Api/Fiscal/42/VoucherPreview/30/Summary")
 
+    def test_summary_preserves_duplicate_warning_even_when_ready(self) -> None:
+        warning = "Dette fakturanummer (INV-123) er allerede registreret på følgende bilag: 99"
+        summary: dict[str, Any] = {
+            "BookkeepingResult": {
+                "Errors": [], "Warnings": [warning], "IsReadyForBookkeeping": True,
+            },
+            "OrderTaskResult": {"CanBookkeep": True, "Errors": []},
+            "AuthorizationResult": None,
+        }
+        self.session.reply(summary)
+        result = self.workflow.get_summary(30)
+        self.assertEqual(result, summary)
+        self.assertEqual(result["BookkeepingResult"]["Warnings"], [warning])
+        self.assertTrue(result["BookkeepingResult"]["IsReadyForBookkeeping"])
+        self.assertEqual(len(self.session.calls), 1)
+        self.assertEqual(self.session.calls[0].method, "GET")
+
     def test_header_fields_merge_fresh_dto_and_convert_dates(self) -> None:
         original: dict[str, Any] = {"Id": 30, "Version": 7, "PartnerId": 8, "UnknownField": {"keep": True}, "Description": "old"}
         self.session.reply(original)
@@ -207,8 +224,66 @@ class RegistrationTests(_WorkflowTestCase):
         with self.assertRaises(VoucherRegistrationError):
             self.workflow.get_all(resource_id=9)
 
-    def test_no_bookkeeping_or_excluded_operations(self) -> None:
-        for name in ("bookkeep", "get_contra_lines", "get_difference_lines", "update_partner_context"):
+    def test_bookkeep_uses_generated_endpoint_and_preserves_captured_result(self) -> None:
+        result: dict[str, Any] = {
+            "AssignedId": -1, "StatusCode": 200, "Messages": [], "Errors": [], "Success": True,
+        }
+        self.session.reply(result)
+        with patch.object(self.session, "put", wraps=self.session.put) as put:
+            self.assertEqual(self.workflow.bookkeep(30), result)
+            self.assertEqual(put.call_args.kwargs["timeout"], 30)
+        self.assertEqual(len(self.session.calls), 1)
+        request = self.session.calls[0]
+        self.assertEqual(request.method, "PUT")
+        self.assertEqual(urlsplit(request.url or "").path, "/Api/Fiscal/42/VoucherPreview/30/Bookkeep")
+        self.assertEqual(urlsplit(request.url or "").query, "")
+        self.assertFalse(request.body)
+        self.assertEqual(request.headers["Authorization"], "Bearer test-access-token")
+        self.assertNotIn("XenaAPIKey", request.headers)
+
+    def test_bookkeep_returns_business_failure_without_retry(self) -> None:
+        result: dict[str, Any] = {
+            "Success": False, "Errors": ["Missing account"], "Messages": ["Review the preview"],
+            "StatusCode": 400, "AssignedId": -1, "AdditionalField": {"keep": True},
+        }
+        self.session.reply(result)
+        self.assertEqual(self.workflow.bookkeep(30), result)
+        self.assertEqual(len(self.session.calls), 1)
+
+    def test_bookkeep_rejects_invalid_ids_without_requests(self) -> None:
+        invalid_ids: list[Any] = [True, False, 0, -1, None, "30", 30.5]
+        for value in invalid_ids:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.workflow.bookkeep(value)
+        self.assertEqual(self.session.calls, [])
+
+    def test_bookkeep_rejects_unexpected_response_shapes_without_retry(self) -> None:
+        payloads: list[Any] = [None, "invalid", [], {}, {"Success": 1}, {"Success": "true"}]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.session.reply(payload)
+                before = len(self.session.calls)
+                with self.assertRaises(VoucherRegistrationError):
+                    self.workflow.bookkeep(30)
+                self.assertEqual(len(self.session.calls), before + 1)
+
+    def test_bookkeep_propagates_http_errors_without_retry(self) -> None:
+        for status in (401, 403, 404, 409, 500):
+            with self.subTest(status=status):
+                self.session.reply({"Errors": ["Bookkeeping rejected"]}, status=status)
+                before = len(self.session.calls)
+                with self.assertRaises(requests.HTTPError):
+                    self.workflow.bookkeep(30)
+                self.assertEqual(len(self.session.calls), before + 1)
+
+    def test_bookkeep_propagates_timeout_without_retry(self) -> None:
+        with patch.object(self.session, "send", side_effect=requests.Timeout("Timed out")) as send:
+            with self.assertRaises(requests.Timeout):
+                self.workflow.bookkeep(30)
+            send.assert_called_once()
+
+    def test_excluded_operations(self) -> None:
+        for name in ("get_contra_lines", "get_difference_lines", "update_partner_context"):
             self.assertFalse(hasattr(self.workflow, name))
 
 
@@ -276,6 +351,7 @@ class AuthenticationTests(unittest.TestCase):
             lambda: workflow.update_line_fields(31, Amount=1),
             lambda: workflow.delete_line(31),
             lambda: workflow.get_summary(30),
+            lambda: workflow.bookkeep(30),
             lambda: wrapper.document.get_by_id(20),
             lambda: wrapper.document.get_last_version(20),
             lambda: wrapper.document.get_preview_url(21),
