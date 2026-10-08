@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol, cast
 
 from ...core import DateInput, to_fiscal_date_int
@@ -394,4 +394,119 @@ class PartnerLedgerWorkflow:
         return self._client.order.api_order__put_pay_put__api__fiscal_fiscal_id__order__pay(
             pay_data=pay_data,
             fiscal_id=self._fiscal_id,
+        )
+
+    def build_customer_payment_payload(
+        self,
+        partner_id: int,
+        partner_post_ids: list[int],
+        *,
+        amount: Decimal | str | int,
+        payment_ledger_tag_id: int,
+        pay_date: DateInput,
+    ) -> dict[str, Any]:
+        """Prepare a full NOK customer payment without posting it.
+
+        amount is positive NOK (not ore). Only open customer invoices for this
+        partner are accepted, with an exact remaining-total match. Exceptions
+        are left to the caller; no rounding, journal fallback or retry occurs.
+        Wire casing and zero-valued account rows follow the legacy PHP helper.
+        """
+        ids = partner_post_ids
+        if (not ids or any(type(i) is not int or i <= 0 for i in ids)
+                or len(set(ids)) != len(ids)):
+            raise PartnerLedgerError("Supply unique positive partner_post_ids")
+        if type(partner_id) is not int or partner_id <= 0:
+            raise PartnerLedgerError("partner_id must be a positive integer")
+        if type(payment_ledger_tag_id) is not int or payment_ledger_tag_id <= 0:
+            raise PartnerLedgerError("payment_ledger_tag_id must be a positive integer")
+
+        def money(value: Any) -> Decimal:
+            try:
+                result = _as_decimal(value)
+            except (InvalidOperation, ValueError) as exc:
+                raise PartnerLedgerError("Invalid payment amount") from exc
+            if not result.is_finite():
+                raise PartnerLedgerError("Amount must be finite")
+            return result
+
+        paid = money(amount)
+        try:
+            valid_amount = paid > 0 and paid == paid.quantize(Decimal("0.01"))
+        except InvalidOperation:
+            valid_amount = False
+        if not valid_amount:
+            raise PartnerLedgerError("Payment must be positive with at most two decimals")
+        # requests serializes numeric JSON using float; reject lossy conversion.
+        wire_amount = float(paid)
+        if Decimal(str(wire_amount)) != paid:
+            raise PartnerLedgerError("Payment amount cannot be represented safely")
+        day = to_fiscal_date_int(pay_date)
+        invoices = _extract_entities(self.get_posts(
+            partner_id, context_type="customer", post_type="customer_invoice",
+            is_settled=False, force_no_paging=True,
+        ))
+        invoice_ids = {row.get("Id") for row in invoices
+                       if row.get("PartnerId") == partner_id}
+        open_rows = _extract_entities(self.get_unsettled_posts(partner_id, force_no_paging=True))
+        index = {row.get("Id"): row for row in open_rows
+                 if row.get("PartnerId") == partner_id}
+        if any(i not in invoice_ids or i not in index for i in ids):
+            raise PartnerLedgerError("Selected posts must be open customer invoices for this partner")
+        rows = [index[i] for i in ids]
+        if any(row.get("CurrencyAbbreviation") != "NOK" for row in rows):
+            raise PartnerLedgerError("Customer payment currently supports NOK invoices only")
+        remaining = [money(row.get("RemainingAmount")) for row in rows]
+        if any(value <= 0 for value in remaining) or sum(remaining) != paid:
+            raise PartnerLedgerError("Payment must exactly match positive remaining invoice amounts")
+
+        tags = _extract_entities(self._client.finance.api_ledger_tag__get_settlement_tag_get__api__fiscal_fiscal_id__ledger_tag__settlement_tag(
+            fiscal_id=self._fiscal_id, list_options_force_no_paging=True,
+        ))
+        if sum(tag.get("Id") == payment_ledger_tag_id for tag in tags) != 1:
+            raise PartnerLedgerError("Selected payment account must be a unique settlement tag")
+        difference_tags = _extract_entities(self._client.finance.api_ledger_tag__get_currency_difference_tag_get__api__fiscal_fiscal_id__ledger_tag__currency_difference_tag(
+            fiscal_id=self._fiscal_id, list_options_force_no_paging=True,
+        ))
+        ledger_posts = []
+        seen: set[int] = set()
+        for tag in tags + difference_tags:
+            tag_id = tag.get("Id")
+            if type(tag_id) is not int or tag_id <= 0 or tag_id in seen:
+                raise PartnerLedgerError("Invalid or duplicate ledger tag in payment account response")
+            seen.add(tag_id)
+            ledger_posts.append({
+                "LedgerTagId": tag_id,
+                "LedgerTagNumber": tag.get("Number", tag.get("LedgerTagNumber")),
+                "LedgerTagDescription": tag.get("Description"),
+                "Amount": wire_amount if tag_id == payment_ledger_tag_id else 0,
+            })
+        return {
+            "ledgerPosts": ledger_posts,
+            "partnerPostIds": list(ids),
+            "currencyAbbreviation": "NOK",
+            "payDate": day,
+        }
+
+    def pay_customer_invoices(
+        self,
+        partner_id: int,
+        partner_post_ids: list[int],
+        *,
+        amount: Decimal | str | int,
+        payment_ledger_tag_id: int,
+        pay_date: DateInput,
+    ) -> Any:
+        """Validate and register the payment using Order/Pay's HTTP PUT.
+
+        Returns the client's response unchanged, including an empty response.
+        API errors propagate. On uncertain outcomes reconcile before retrying;
+        this endpoint has no wrapper-level idempotency guarantee.
+        """
+        payload = self.build_customer_payment_payload(
+            partner_id, partner_post_ids, amount=amount,
+            payment_ledger_tag_id=payment_ledger_tag_id, pay_date=pay_date,
+        )
+        return self._client.order.api_order__put_pay_put__api__fiscal_fiscal_id__order__pay(
+            pay_data=payload, fiscal_id=self._fiscal_id,
         )

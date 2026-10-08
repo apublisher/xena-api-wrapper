@@ -819,3 +819,47 @@ Live verified scenario:
 9. `partnerPostIds=[3020754398, 2900254804]`
 10. `partialSettleId=3020754398`
 11. Execution result from `settle_partner_posts_safe(...)`: `Success=True`, `StatusCode=200`, `Errors=[]`.
+
+### Register incoming customer payments
+
+`wrapper.partner_ledger.build_customer_payment_payload(...)` prepares a payment
+using read calls only. `pay_customer_invoices(...)` validates again and sends one
+`PUT /Api/Fiscal/{fiscalId}/Order/Pay` through the generated client.
+Existing `settle_partner_posts_safe(...)` remains a zero-sum matching operation.
+
+```python
+from decimal import Decimal
+
+payment = dict(
+    partner_id=customer_id,
+    partner_post_ids=[invoice_partner_post_id],  # not OrderId or invoice number
+    amount=Decimal("123.45"),  # positive NOK, not ore
+    payment_ledger_tag_id=bank_ledger_tag_id,  # Xena ID, not account number
+    pay_date="2026-10-07",
+)
+payload = wrapper.partner_ledger.build_customer_payment_payload(**payment)
+# Explicit write when the application is ready:
+# result = wrapper.partner_ledger.pay_customer_invoices(**payment)
+```
+
+Initial scope is full payment of open NOK customer invoices in a NOK accounting
+setup, without currency conversion. Selected posts must belong to the supplied
+customer, and their positive RemainingAmount total must match the payment exactly.
+The selected account must be returned by SettlementTag. Validation failures raise
+PartnerLedgerError before writing. Closed invoices, underpayments and overpayments
+remain the application's responsibility; there is no automatic journal fallback.
+
+The payload follows the historical PHP PayCustomerInvoice helper: camelCase outer
+keys, PascalCase ledger rows, all settlement and currency-difference accounts,
+with the amount on the selected bank account and zero on the other rows.
+PartialSettleId is omitted as in that helper. PayDate uses fiscal epoch days.
+This new payment flow has mocked regression tests but has not been live-verified;
+current server casing, sign and response semantics need a controlled first payment.
+
+Client responses are returned unchanged and API exceptions propagate. Inspect any
+application-level errors in a successful HTTP response. No automatic retry is made.
+After timeout or connection loss, reconcile the outcome before another write.
+The caller owns per-payment idempotency, concurrency control and OCR import state.
+Preparing a payload does not reserve the invoice; it may change before submission.
+Authentication is inherited from the wrapper; an OAuth-only OCR policy belongs to
+the calling application. No client-package changes are needed.
