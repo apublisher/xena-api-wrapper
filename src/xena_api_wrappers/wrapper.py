@@ -265,6 +265,11 @@ class XenaApiWrapper:
         return self._partner_ledger_workflow
 
     @property
+    def customer_receipt(self):
+        from .workflows.partner.customer_receipt import CustomerReceiptWorkflow
+        return CustomerReceiptWorkflow(self)
+
+    @property
     def voucher_draft(self) -> VoucherDraftWorkflow:
         if self._voucher_draft_workflow is None:
             self._voucher_draft_workflow = VoucherDraftWorkflow(

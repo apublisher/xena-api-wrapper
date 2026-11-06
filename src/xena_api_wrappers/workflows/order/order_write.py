@@ -133,6 +133,17 @@ class OrderWriteWorkflow:
             id=str(order_id),
         )
 
+    def update_line(self, line_id: int, line_dto: dict[str, Any]) -> Any:
+        """Update an existing order line without invoicing or bookkeeping."""
+        if not isinstance(line_id, int) or isinstance(line_id, bool) or line_id <= 0:
+            raise OrderWriteError("line_id must be a positive integer")
+        if not isinstance(line_dto, dict) or not line_dto:
+            raise OrderWriteError("line_dto must be a non-empty dict")
+        if line_dto.get("OrderInvoiceTaskId") is not None or line_dto.get("InvoiceDateDays") is not None:
+            raise OrderWriteError("Cannot update an invoiced line")
+        return self._client.order.api_order_line__put_put__api__fiscal_fiscal_id__order_line_id(
+            line_dto=dict(line_dto), fiscal_id=self._fiscal_id, id=str(line_id))
+
     def update_task(self, task_id: int, task_dto: dict[str, Any]) -> Any:
         """Update one order task using generated API naming/signature fallbacks."""
         if not isinstance(cast(object, task_dto), dict):

@@ -396,7 +396,88 @@ class PartnerLedgerWorkflow:
             fiscal_id=self._fiscal_id,
         )
 
-    def build_customer_payment_payload(
+    def resolve_customer_invoice_post_id(
+        self, partner_id: int, invoice_number: int, *, amount: Decimal | str | int,
+        fiscal_date: DateInput,
+    ) -> int:
+        """Resolve the reskontro ID; an invoice-entity ID is a different identity.
+
+        Match a unique open customer invoice by partner, voucher number, fiscal
+        date, currency and exact original/remaining amount. Performs only reads.
+        """
+        expected = _as_decimal(amount)
+        day = to_fiscal_date_int(fiscal_date)
+        if type(partner_id) is not int or partner_id <= 0 or type(invoice_number) is not int or invoice_number <= 0:
+            raise PartnerLedgerError("Positive partner and invoice numbers required")
+        rows = _extract_entities(self.get_posts(
+            partner_id, context_type="customer", post_type="customer_credit_note" if expected < 0 else "customer_invoice",
+            is_settled=False, force_no_paging=True,
+        ))
+        matches = [r for r in rows if r.get("PartnerId") == partner_id
+                   and r.get("VoucherNumber") == invoice_number
+                   and r.get("FiscalDateDays") == day
+                   and r.get("CurrencyAbbreviation") == "NOK"
+                   and _as_decimal(r.get("Amount")) == expected
+                   and _as_decimal(r.get("RemainingAmount")) == expected]
+        if len(matches) != 1 or type(matches[0].get("Id")) is not int or matches[0]["Id"] <= 0:
+            raise PartnerLedgerError("Could not uniquely resolve the open invoice reskontro post")
+        return matches[0]["Id"]
+
+    def build_customer_payment_payload(self, partner_id: int, partner_post_ids: list[int], *, amount: Decimal | str | int, payment_ledger_tag_id: int, pay_date: DateInput) -> dict[str, Any]:
+        """Validate a positive full customer-invoice payment; does not post."""
+        return self._build_customer_payment_payload(partner_id, partner_post_ids, amount=amount, payment_ledger_tag_id=payment_ledger_tag_id, pay_date=pay_date)
+
+    def build_customer_cash_settlement_payload(self, partner_id: int, partner_post_ids: list[int], *, amount: Decimal | str | int, payment_ledger_tag_id: int, pay_date: DateInput) -> dict[str, Any]:
+        """Full cash settlement: positive receipt or negative credit-note refund.
+
+        Negative amounts require open customer credit notes of the same sign and
+        exact remaining amount. No partial settlement, difference or retry.
+        """
+        return self._build_customer_payment_payload(partner_id, partner_post_ids, amount=amount, payment_ledger_tag_id=payment_ledger_tag_id, pay_date=pay_date, _allow_credit=True)
+
+    def pay_customer_cash_settlement(self, partner_id: int, partner_post_ids: list[int], *, amount: Decimal | str | int, payment_ledger_tag_id: int, pay_date: DateInput) -> Any:
+        payload = self.build_customer_cash_settlement_payload(partner_id, partner_post_ids, amount=amount, payment_ledger_tag_id=payment_ledger_tag_id, pay_date=pay_date)
+        return self._client.order.api_order__put_pay_put__api__fiscal_fiscal_id__order__pay(pay_data=payload, fiscal_id=self._fiscal_id)
+
+    def build_customer_split_cash_payload(self, partner_id: int, partner_post_ids: list[int], *, allocations: list[dict[str, Any]], pay_date: DateInput) -> dict[str, Any]:
+        """Exact full settlement in one Order/Pay request, across settlement accounts.
+
+        All allocations must have the same sign and sum to the open invoice(s).
+        Preserves the existing positive-only and signed single-account contracts.
+        """
+        if not isinstance(allocations, list) or not allocations:
+            raise PartnerLedgerError("Supply settlement account allocations")
+        values = {}
+        for item in allocations:
+            tag = item.get("payment_ledger_tag_id")
+            try:
+                value = _as_decimal(item.get("amount"))
+                valid = value.is_finite() and value != 0 and value == value.quantize(Decimal("0.01")) and Decimal(str(float(value))) == value
+            except (ValueError, TypeError, InvalidOperation, OverflowError):
+                valid = False
+            if type(tag) is not int or tag <= 0 or tag in values or not valid:
+                raise PartnerLedgerError("Supply unique settlement tags and exact nonzero NOK amounts")
+            values[tag] = value
+        total = sum(values.values(), Decimal(0))
+        if not total or any(value * total <= 0 for value in values.values()):
+            raise PartnerLedgerError("Mixed receipt/refund signs are not allowed")
+        # Reuse all existing invoice, ownership, NOK and exact remaining checks.
+        payload = self._build_customer_payment_payload(partner_id, partner_post_ids, amount=total, payment_ledger_tag_id=next(iter(values)), pay_date=pay_date, _allow_credit=True)
+        tags = _extract_entities(self._client.finance.api_ledger_tag__get_settlement_tag_get__api__fiscal_fiscal_id__ledger_tag__settlement_tag(fiscal_id=self._fiscal_id, list_options_force_no_paging=True))
+        if any(sum(t.get("Id") == tag for t in tags) != 1 for tag in values):
+            raise PartnerLedgerError("Every allocation must be a unique settlement account")
+        for row in payload["ledgerPosts"]:
+            row["Amount"] = float(values.get(row["LedgerTagId"], Decimal(0)))
+        if sum((_as_decimal(row["Amount"]) for row in payload["ledgerPosts"]), Decimal(0)) != total:
+            raise PartnerLedgerError("Settlement account allocation does not balance")
+        return payload
+
+    def pay_customer_split_cash(self, partner_id: int, partner_post_ids: list[int], *, allocations: list[dict[str, Any]], pay_date: DateInput) -> Any:
+        """One explicit write; uncertain outcomes must be reconciled, never retried."""
+        payload = self.build_customer_split_cash_payload(partner_id, partner_post_ids, allocations=allocations, pay_date=pay_date)
+        return self._client.order.api_order__put_pay_put__api__fiscal_fiscal_id__order__pay(pay_data=payload, fiscal_id=self._fiscal_id)
+
+    def _build_customer_payment_payload(
         self,
         partner_id: int,
         partner_post_ids: list[int],
@@ -404,6 +485,7 @@ class PartnerLedgerWorkflow:
         amount: Decimal | str | int,
         payment_ledger_tag_id: int,
         pay_date: DateInput,
+        _allow_credit: bool = False,
     ) -> dict[str, Any]:
         """Prepare a full NOK customer payment without posting it.
 
@@ -432,7 +514,7 @@ class PartnerLedgerWorkflow:
 
         paid = money(amount)
         try:
-            valid_amount = paid > 0 and paid == paid.quantize(Decimal("0.01"))
+            valid_amount = (paid != 0 if _allow_credit else paid > 0) and paid == paid.quantize(Decimal("0.01"))
         except InvalidOperation:
             valid_amount = False
         if not valid_amount:
@@ -443,7 +525,7 @@ class PartnerLedgerWorkflow:
             raise PartnerLedgerError("Payment amount cannot be represented safely")
         day = to_fiscal_date_int(pay_date)
         invoices = _extract_entities(self.get_posts(
-            partner_id, context_type="customer", post_type="customer_invoice",
+            partner_id, context_type="customer", post_type="customer_credit_note" if paid < 0 else "customer_invoice",
             is_settled=False, force_no_paging=True,
         ))
         invoice_ids = {row.get("Id") for row in invoices
@@ -457,7 +539,7 @@ class PartnerLedgerWorkflow:
         if any(row.get("CurrencyAbbreviation") != "NOK" for row in rows):
             raise PartnerLedgerError("Customer payment currently supports NOK invoices only")
         remaining = [money(row.get("RemainingAmount")) for row in rows]
-        if any(value <= 0 for value in remaining) or sum(remaining) != paid:
+        if any(value * paid <= 0 for value in remaining) or sum(remaining) != paid:
             raise PartnerLedgerError("Payment must exactly match positive remaining invoice amounts")
 
         tags = _extract_entities(self._client.finance.api_ledger_tag__get_settlement_tag_get__api__fiscal_fiscal_id__ledger_tag__settlement_tag(

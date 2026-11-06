@@ -353,6 +353,14 @@ class VoucherDraftWorkflow:
             "Provide either ledger_id or ledger_description to resolve draft ledger"
         )
 
+    def preview_convenience_rows(self, rows: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Resolve and validate rows with reads only; no line/voucher is created."""
+        entries = self._normalize_entry_rows(rows)
+        return [self._build_updated_line_payload(
+            base_dto={"FiscalDateDays": to_fiscal_date_int(entry["date"]), "VatId": None},
+            entry=entry, shared_voucher_number=None, strict_settlement_contra=True,
+        ) for entry in entries]
+
     def create_lines_convenience(
         self,
         rows: dict[str, Any] | list[dict[str, Any]],

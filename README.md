@@ -853,8 +853,9 @@ The payload follows the historical PHP PayCustomerInvoice helper: camelCase oute
 keys, PascalCase ledger rows, all settlement and currency-difference accounts,
 with the amount on the selected bank account and zero on the other rows.
 PartialSettleId is omitted as in that helper. PayDate uses fiscal epoch days.
-This new payment flow has mocked regression tests but has not been live-verified;
-current server casing, sign and response semantics need a controlled first payment.
+The payment flows have mocked regression tests and have been exercised with
+controlled live invoice, reskontro and bank-ledger readback. Applications must still
+verify each result and retain a durable claim before any financial write.
 
 Client responses are returned unchanged and API exceptions propagate. Inspect any
 application-level errors in a successful HTTP response. No automatic retry is made.
@@ -863,3 +864,38 @@ The caller owns per-payment idempotency, concurrency control and OCR import stat
 Preparing a payload does not reserve the invoice; it may change before submission.
 Authentication is inherited from the wrapper; an OAuth-only OCR policy belongs to
 the calling application. No client-package changes are needed.
+
+
+### Customer receipts, credit and mixed cash payments
+
+Version 1.7 adds these task-oriented helpers without changing the positive-only
+`pay_customer_invoices` contract:
+
+- `partner_ledger.resolve_customer_invoice_post_id`: resolve the actual customer
+  ledger post, not an order or invoice-entity ID. Validates ownership, voucher,
+  original/open amount, currency and date.
+- `build_customer_cash_settlement_payload` / `pay_customer_cash_settlement`:
+  exact positive receipts or negative customer-credit-note refunds.
+- `build_customer_split_cash_payload` / `pay_customer_split_cash`: one exact full
+  settlement across several settlement accounts in a **single** Order/Pay request.
+  Pass `allocations=[{"payment_ledger_tag_id": card_tag_id, "amount": "80.00"},
+  {"payment_ledger_tag_id": cash_tag_id, "amount": "20.00"}]` and `pay_date`.
+  Accounts must be active settlement tags, signs must agree, and the sum must
+  equal the selected invoice's current remaining amount. No rounding or retries.
+- `customer_receipt.build_plan`: read-only allocation of a bank receipt between
+  invoice principal, unallocated customer credit and explicitly supplied income
+  allocations. Supports partial payments, exact cents, expected balance checks,
+  bank-account validation and income accounts without default VAT.
+- `customer_receipt.create_draft(plan, ledger_id=...)`: revalidates the plan and
+  creates voucher draft lines in an explicitly selected ledger. It does not
+  bookkeep or distribute documents. The caller must retain returned line IDs and
+  handle uncertain or partial outcomes before retrying.
+- `voucher_draft.preview_convenience_rows`: resolve draft DTOs with reads only.
+- `partner.update_customer_invoice_email`: update `InvoiceEmail` on the existing
+  customer context, preserving the context's version. A blank value clears it.
+- `order_write.update_line`: update an existing order line; rejects invoiced lines.
+
+The caller owns receipt identity, duplicate detection, concurrent claims, approval
+and reconciliation. A preview does not reserve the invoice balance or determine
+whether a surplus is interest, a fee or credit. No helper retries financial writes
+or infers income from an unexplained excess payment.

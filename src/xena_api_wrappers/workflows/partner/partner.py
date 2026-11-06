@@ -224,6 +224,30 @@ class PartnerWorkflow:
             id=str(partner_id),
         )
 
+    def update_customer_invoice_email(self, partner_id: int, email: str | None) -> Any:
+        """Update the partner's customer context, where InvoiceEmail is stored.
+
+        None or blank clears the address. Preserve the full context and version;
+        never create a second customer context or update order-only email fields.
+        """
+        if type(partner_id) is not int or partner_id <= 0:
+            raise PartnerError("partner_id must be a positive integer")
+        normalized = _normalize_optional_email(email)
+        raw = self.get_contexts(partner_id, force_no_paging=True)
+        if hasattr(raw, "to_dict"):
+            raw = raw.to_dict()
+        rows = raw.get("Entities", []) if isinstance(raw, dict) else raw
+        matches = [r for r in rows if r.get("PartnerId") == partner_id
+                   and r.get("ContextType") == "ContextType_Customer"
+                   and not r.get("IsDeactivated")]
+        if len(matches) != 1 or type(matches[0].get("Id")) is not int:
+            raise PartnerError("Expected one active customer context for this partner")
+        dto = dict(matches[0])
+        dto["InvoiceEmail"] = normalized
+        return self._client.partner.api_partner_context__put_put__api__fiscal_fiscal_id__partner_context_id(
+            dto=dto, fiscal_id=self._fiscal_id, id=str(dto["Id"]),
+        )
+
     def delete(self, partner_id: int) -> Any:
         return self._client.partner.api_partner__delete_delete__api__fiscal_fiscal_id__partner_id(
             id=partner_id,
