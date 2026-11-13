@@ -6,6 +6,7 @@ from typing import Any, ClassVar, cast
 
 from ...core import DateInput, to_fiscal_date_int
 from ..utils import LedgerListWorkflow
+from ..utils.fiscal_period import FiscalPeriodWorkflow
 from ..utils.ledger_account import LedgerAccountNotFoundError, LedgerAccountWorkflow
 from ..utils.ledger_tag import LedgerTagWorkflow
 from ..utils.ledger_tag import LedgerTagNotFoundError
@@ -24,6 +25,12 @@ class VoucherDraftValidationError(VoucherDraftError):
     """Raised when convenience-line input cannot be validated."""
 
 
+@dataclass(frozen=True)
+class _LedgerInstance:
+    ledger_id: int
+    fiscal_period_id: int
+
+
 @dataclass
 class VoucherDraftWorkflow:
     """Workflow helper for bookkeeping draft-voucher (Kassekladd) operations."""
@@ -36,6 +43,8 @@ class VoucherDraftWorkflow:
     _vat_workflow: VatWorkflow | None = None
     _selected_ledger_id: int | None = None
     _ensure_xena_ui_is_happy: bool = True
+    _fiscal_period_workflow: FiscalPeriodWorkflow | None = None
+    _active_ledger_instance: _LedgerInstance | None = None
 
     _CONVENIENCE_ALLOWED_KEYS = {
         "date",
@@ -284,6 +293,10 @@ class VoucherDraftWorkflow:
 
     def _create_line_raw(self, dto: dict[str, Any]) -> Any:
         request_body = self._hydrate_create_line_dto(dto)
+        self._prepare_ledger_for_date(request_body.get("LedgerId"), request_body.get("FiscalDateDays"))
+        return self._post_line(request_body)
+
+    def _post_line(self, request_body: dict[str, Any]) -> Any:
         return self._client.finance.api_ledger_line__post_post__api__fiscal_fiscal_id__ledger_line(
             dto=request_body,
             fiscal_id=self._fiscal_id,
@@ -302,6 +315,21 @@ class VoucherDraftWorkflow:
         return self.set_ensure_xena_ui_is_happy(False)
 
     def update_line(self, ledger_line_id: int, dto: dict[str, Any]) -> Any:
+        # Partial updates inherit the saved line's ledger/date, never today's date
+        # or the workflow's currently selected ledger.
+        ledger_id = dto.get("LedgerId")
+        fiscal_date_days = dto.get("FiscalDateDays")
+        if "LedgerId" not in dto or "FiscalDateDays" not in dto:
+            existing = self._as_dict(
+                self._client.finance.api_ledger_line__get_get__api__fiscal_fiscal_id__ledger_line_id(
+                    fiscal_id=self._fiscal_id, id=ledger_line_id,
+                )
+            )
+            if "LedgerId" not in dto:
+                ledger_id = existing.get("LedgerId")
+            if "FiscalDateDays" not in dto:
+                fiscal_date_days = existing.get("FiscalDateDays")
+        self._prepare_ledger_for_date(ledger_id, fiscal_date_days)
         return self._client.finance.api_ledger_line__put_put__api__fiscal_fiscal_id__ledger_line_id(
             dto=dto,
             fiscal_id=self._fiscal_id,
@@ -381,11 +409,13 @@ class VoucherDraftWorkflow:
                 "Provide ledger_id/ledger_description, or set class default with set_ledger_by_name/set_ledger_by_id"
             )
 
-        shared_voucher_number = voucher_number
+        voucher_numbers: dict[_LedgerInstance, int | None] = {}
         line_results: list[dict[str, Any]] = []
 
         for index, entry in enumerate(entries):
             fiscal_date_days = to_fiscal_date_int(cast(DateInput, entry.get("date")))
+            instance = self._prepare_ledger_for_date(resolved_ledger_id, fiscal_date_days)
+            shared_voucher_number = voucher_numbers.get(instance, voucher_number)
 
             create_payload: dict[str, Any] = {
                 "LedgerId": resolved_ledger_id,
@@ -394,7 +424,7 @@ class VoucherDraftWorkflow:
             if isinstance(shared_voucher_number, int):
                 create_payload["VoucherNumber"] = shared_voucher_number
 
-            created_raw = self._create_line_raw(create_payload)
+            created_raw = self._post_line(create_payload)
             created = self._as_dict(created_raw)
 
             created_id = created.get("Id")
@@ -407,6 +437,7 @@ class VoucherDraftWorkflow:
                 vn = created.get("VoucherNumber")
                 if isinstance(vn, int):
                     shared_voucher_number = vn
+            voucher_numbers[instance] = shared_voucher_number
 
             updated_payload = self._build_updated_line_payload(
                 base_dto=created,
@@ -420,6 +451,7 @@ class VoucherDraftWorkflow:
             line_results.append(
                 {
                     "Index": index,
+                    "FiscalPeriodId": instance.fiscal_period_id,
                     "Created": created,
                     "Updated": updated,
                 }
@@ -427,7 +459,7 @@ class VoucherDraftWorkflow:
 
         return {
             "LedgerId": resolved_ledger_id,
-            "VoucherNumber": shared_voucher_number,
+            "VoucherNumber": next(iter(voucher_numbers.values())) if len(voucher_numbers) == 1 else None,
             "LineCount": len(line_results),
             "Lines": line_results,
         }
@@ -470,6 +502,29 @@ class VoucherDraftWorkflow:
         if self._ledger_list_workflow is None:
             self._ledger_list_workflow = LedgerListWorkflow(self._client, self._fiscal_id)
         return self._ledger_list_workflow
+
+    def _prepare_ledger_for_date(self, ledger_id: Any, fiscal_date_days: Any) -> _LedgerInstance:
+        if not isinstance(ledger_id, int) or isinstance(ledger_id, bool):
+            raise VoucherDraftValidationError("LedgerId must be an integer")
+        if not isinstance(fiscal_date_days, int) or isinstance(fiscal_date_days, bool):
+            raise VoucherDraftValidationError("FiscalDateDays must be an integer posting date")
+        if self._fiscal_period_workflow is None:
+            self._fiscal_period_workflow = FiscalPeriodWorkflow(self._client, self._fiscal_id)
+
+        # Resolve from the date before any write. A missing fiscal year is an
+        # explicit FiscalPeriodNotFoundError; we never create fiscal years here.
+        period_id = self._fiscal_period_workflow.get_id_by_date(fiscal_date_days)
+        instance = _LedgerInstance(ledger_id, period_id)
+        # Read even when the logical instance is unchanged: another caller may
+        # have changed this shared journal's period since the previous posting.
+        ledger = self._as_dict(self.get_ledger_by_id(ledger_id))
+        if ledger.get("FiscalPeriodId") != period_id:
+            updated = self._as_dict(self.update_ledger(ledger_id, {**ledger, "FiscalPeriodId": period_id}))
+            if updated.get("FiscalPeriodId") != period_id:
+                raise VoucherDraftValidationError("Ledger update did not confirm the posting's fiscal period")
+        if self._active_ledger_instance != instance:
+            self._active_ledger_instance = instance
+        return self._active_ledger_instance
 
     def _get_ledger_tag_workflow(self) -> LedgerTagWorkflow:
         if self._ledger_tag_workflow is None:
