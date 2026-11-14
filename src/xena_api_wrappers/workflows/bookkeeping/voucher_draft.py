@@ -409,6 +409,21 @@ class VoucherDraftWorkflow:
                 "Provide ledger_id/ledger_description, or set class default with set_ledger_by_name/set_ledger_by_id"
             )
 
+        # Resolve every date before any write, including a change of ledger year.
+        instances = [
+            self._resolve_ledger_instance(resolved_ledger_id, to_fiscal_date_int(entry.get("date")))
+            for entry in entries
+        ]
+        if len(set(instances)) > 1:
+            raise VoucherDraftValidationError("All rows in a sequence must belong to the same fiscal period")
+        # Validate row inputs before creating even the first empty draft line.
+        for entry in entries:
+            self._build_updated_line_payload(
+                base_dto={"FiscalDateDays": to_fiscal_date_int(entry.get("date")), "VatId": None},
+                entry=entry, shared_voucher_number=voucher_number,
+                strict_settlement_contra=strict_settlement_contra,
+            )
+
         voucher_numbers: dict[_LedgerInstance, int | None] = {}
         line_results: list[dict[str, Any]] = []
 
@@ -503,7 +518,7 @@ class VoucherDraftWorkflow:
             self._ledger_list_workflow = LedgerListWorkflow(self._client, self._fiscal_id)
         return self._ledger_list_workflow
 
-    def _prepare_ledger_for_date(self, ledger_id: Any, fiscal_date_days: Any) -> _LedgerInstance:
+    def _resolve_ledger_instance(self, ledger_id: Any, fiscal_date_days: Any) -> _LedgerInstance:
         if not isinstance(ledger_id, int) or isinstance(ledger_id, bool):
             raise VoucherDraftValidationError("LedgerId must be an integer")
         if not isinstance(fiscal_date_days, int) or isinstance(fiscal_date_days, bool):
@@ -514,7 +529,36 @@ class VoucherDraftWorkflow:
         # Resolve from the date before any write. A missing fiscal year is an
         # explicit FiscalPeriodNotFoundError; we never create fiscal years here.
         period_id = self._fiscal_period_workflow.get_id_by_date(fiscal_date_days)
-        instance = _LedgerInstance(ledger_id, period_id)
+        return _LedgerInstance(ledger_id, period_id)
+
+    def _prepare_ledger_for_date(self, ledger_id: Any, fiscal_date_days: Any) -> _LedgerInstance:
+        instance = self._resolve_ledger_instance(ledger_id, fiscal_date_days)
+        period_id = instance.fiscal_period_id
+        # VoucherId is a context-dependent lookup, not evidence that a draft row
+        # can be ignored. Inspect all active rows, even those with VoucherId set.
+        raw = self.get_lines(ledger_id, force_no_paging=True)
+        if isinstance(raw, list):
+            lines = raw
+        else:
+            payload = self._as_dict(raw)
+            lines = payload.get("Entities")
+            count = payload.get("Count")
+            if not isinstance(lines, list) or (
+                isinstance(count, int) and count > len(lines)
+            ):
+                raise VoucherDraftValidationError("Could not read all existing draft lines")
+        for raw_line in lines:
+            line = self._as_dict(raw_line)
+            if line.get("IsDeactivated") is True:
+                continue
+            if line.get("LedgerId", ledger_id) != ledger_id:
+                raise VoucherDraftValidationError("Unexpected ledger in draft line response")
+            existing = self._resolve_ledger_instance(ledger_id, line.get("FiscalDateDays"))
+            if existing != instance:
+                raise VoucherDraftValidationError(
+                    "Ledger contains draft lines from another fiscal period; "
+                    "use a separate ledger or clear the existing draft first"
+                )
         # Read even when the logical instance is unchanged: another caller may
         # have changed this shared journal's period since the previous posting.
         ledger = self._as_dict(self.get_ledger_by_id(ledger_id))
