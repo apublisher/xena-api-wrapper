@@ -434,6 +434,37 @@ summary = wrapper.preview_voucher_draft_summary(
 
 The draft voucher workflow intentionally targets draft-safe operations and does not call the bookkeeping/approve endpoint.
 
+Before any write, `create_lines_convenience` resolves every input date and
+validates every row. All rows must belong to the same existing Xena fiscal
+period; mixed periods and missing periods fail before any line or ledger update.
+The check uses fiscal-period IDs, not calendar-year numbers.
+
+Before each draft-line create or update, the workflow reads all active lines
+in the target ledger. Every existing line must belong to the requested period.
+This also applies to separate calls and partial updates. Lines with a
+`VoucherId` are included: Xena can resolve that value against the ledger's
+selected year, so it does not prove that the draft line is already booked.
+Missing dates, unreadable responses and incomplete listings fail closed.
+Moving an existing line to another period is rejected; use a separate ledger
+or explicitly clear the draft through the caller's normal workflow.
+
+Only after these checks does the workflow set the ledger's `FiscalPeriodId`
+from the posting date if necessary. Existing settings and `Version` are
+preserved, and the returned period must confirm the change. This prevents
+the previously selected year from leaking into a new, empty draft.
+A ledger/year pair is a bookkeeping context, not an isolated line container.
+
+`create_line` / `create_voucher_draft_line` require an explicit integer
+`FiscalDateDays`; `create_lines_convenience` accepts the usual `date` inputs.
+Partial `update_line` calls resolve omitted ledger/date fields from the saved
+line. Convenience rows share a voucher number within the validated period;
+an explicitly supplied `voucher_number` is preserved.
+
+Validation is not a transaction or a lock. API failures after writing starts
+can leave earlier draft lines in place. Callers must serialize writers to the
+same ledger; another writer can change it between the read and write.
+These workflows never call bookkeeping/approve or reopen fiscal periods.
+
 ### Kassekladd partner payment with open-posting settlement
 
 You can now capture unsettled candidate postings and attach the selected posting id(s)

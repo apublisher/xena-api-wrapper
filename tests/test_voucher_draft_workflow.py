@@ -3,6 +3,10 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
+
+from xena_api_wrappers.core import to_fiscal_date_int
+from xena_api_wrappers.workflows.utils.fiscal_period import FiscalPeriodNotFoundError
 
 from xena_api_wrappers.workflows.bookkeeping import (
     VoucherDraftLedgerNotFoundError,
@@ -16,6 +20,26 @@ class _FakeFinance:
         self._next_id = 3037274927
         self.last_updated_dto: dict[str, Any] | None = None
         self.last_payment_suggestion_call: dict[str, Any] | None = None
+        self.periods = [
+            {"Id": year, "Description": str(year),
+             "FiscalPeriodStartDays": to_fiscal_date_int(f"{year}-01-01"),
+             "FiscalPeriodEndDays": to_fiscal_date_int(f"{year}-12-31")}
+            for year in (2025, 2026)
+        ]
+        self.ledgers = {
+            ledger_id: {"Id": ledger_id, "Description": name, "FiscalPeriodId": 2026,
+                        "Version": 3, "Minimum": 10000, "Maximum": 99999}
+            for ledger_id, name in ((2265976208, "Bank2Xena"), (2181157620, "Finans"))
+        }
+        self.lines: dict[int, dict[str, Any]] = {}
+        self.events: list[tuple[str, int, int]] = []
+        self.ledger_updates: list[dict[str, Any]] = []
+        self.created_dtos: list[dict[str, Any]] = []
+
+    def api_fiscal_period__get_get__api__fiscal_fiscal_id__fiscal_period(
+        self, **kwargs: Any,
+    ) -> dict[str, Any]:
+        return {"Entities": self.periods}
 
     def api_bookkeeping__get_voucher_modified_history_get__api__fiscal_fiscal_id__bookkeeping__voucher_modified_history(
         self,
@@ -63,7 +87,12 @@ class _FakeFinance:
 
     def api_ledger__get_get__api__fiscal_fiscal_id__ledger_id(self, fiscal_id: str, id: int) -> dict[str, Any]:
         _ = fiscal_id
-        return {"Id": id, "Description": "Bank2Xena"}
+        return dict(self.ledgers[id])
+
+    def api_ledger_line__get_get__api__fiscal_fiscal_id__ledger_line_id(
+        self, fiscal_id: str, id: int,
+    ) -> dict[str, Any]:
+        return dict(self.lines[id])
 
     def api_ledger_line__get_get__api__fiscal_fiscal_id__ledger_id__line(
         self,
@@ -83,20 +112,18 @@ class _FakeFinance:
             list_options_page_size,
             list_options_force_no_paging,
         )
-        return {
-            "Count": 3,
-            "Entities": [
-                {"Id": 3037274927, "LedgerId": id, "VoucherId": None, "IsDeactivated": False},
-                {"Id": 3037274928, "LedgerId": id, "VoucherId": 999, "IsDeactivated": False},
-                {"Id": 3037274929, "LedgerId": id, "VoucherId": None, "IsDeactivated": True},
-            ],
-        }
+        entities = [dict(row) for row in self.lines.values() if row.get("LedgerId") == id]
+        return {"Count": len(entities), "Entities": entities}
 
     def api_ledger_line__post_post__api__fiscal_fiscal_id__ledger_line(
         self, dto: dict[str, Any], fiscal_id: str
     ) -> dict[str, Any]:
         _ = fiscal_id
-        payload: dict[str, Any] = {"Id": self._next_id, "VoucherNumber": 15000, **dto}
+        self.created_dtos.append(dict(dto))
+        period_id = self.ledgers[dto["LedgerId"]]["FiscalPeriodId"]
+        self.events.append(("create", dto["LedgerId"], period_id))
+        payload: dict[str, Any] = {"Id": self._next_id, "VoucherNumber": 15000 if period_id == 2026 else 14000, **dto}
+        self.lines[self._next_id] = dict(payload)
         self._next_id += 1
         return payload
 
@@ -105,6 +132,9 @@ class _FakeFinance:
     ) -> dict[str, Any]:
         _ = fiscal_id
         self.last_updated_dto = dict(dto)
+        self.lines[int(id)].update(dto)
+        saved = self.lines[int(id)]
+        self.events.append(("update", saved["LedgerId"], self.ledgers[saved["LedgerId"]]["FiscalPeriodId"]))
         return {"Id": id, **dto}
 
     def api_ledger_line__delete_delete__api__fiscal_fiscal_id__ledger_line_id(
@@ -117,6 +147,9 @@ class _FakeFinance:
         self, ledger: dict[str, Any], fiscal_id: str, id: str
     ) -> dict[str, Any]:
         _ = fiscal_id
+        self.ledger_updates.append(dict(ledger))
+        self.ledgers[int(id)] = dict(ledger)
+        self.events.append(("period", int(id), ledger["FiscalPeriodId"]))
         return {"Id": id, **ledger}
 
     def api_ledger__post_summary_post__api__fiscal_fiscal_id__ledger_id__summary(
@@ -294,21 +327,41 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
         self.assertEqual(ledger_id, 2181157620)
 
     def test_get_lines(self) -> None:
+        self.finance.lines = {
+            3037274927: {"Id": 3037274927, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": False},
+            3037274928: {"Id": 3037274928, "LedgerId": 2265976208, "VoucherId": 999, "IsDeactivated": False},
+            3037274929: {"Id": 3037274929, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": True},
+        }
         payload = self.workflow.get_lines(2265976208)
         self.assertEqual(payload["Entities"][0]["LedgerId"], 2265976208)
 
     def test_get_unbooked_lines_by_ledger_id(self) -> None:
+        self.finance.lines = {
+            3037274927: {"Id": 3037274927, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": False},
+            3037274928: {"Id": 3037274928, "LedgerId": 2265976208, "VoucherId": 999, "IsDeactivated": False},
+            3037274929: {"Id": 3037274929, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": True},
+        }
         payload = self.workflow.get_unbooked_lines(ledger_id=2265976208, force_no_paging=True)
         self.assertEqual(payload["LedgerId"], 2265976208)
         self.assertEqual(payload["Count"], 1)
         self.assertEqual(payload["Entities"][0]["Id"], 3037274927)
 
     def test_get_unbooked_lines_by_ledger_description(self) -> None:
+        self.finance.lines = {
+            3037274927: {"Id": 3037274927, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": False},
+            3037274928: {"Id": 3037274928, "LedgerId": 2265976208, "VoucherId": 999, "IsDeactivated": False},
+            3037274929: {"Id": 3037274929, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": True},
+        }
         payload = self.workflow.get_unbooked_lines(ledger_description="Bank2Xena", force_no_paging=True)
         self.assertEqual(payload["LedgerId"], 2265976208)
         self.assertEqual(payload["Count"], 1)
 
     def test_get_unbooked_lines_can_include_deactivated(self) -> None:
+        self.finance.lines = {
+            3037274927: {"Id": 3037274927, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": False},
+            3037274928: {"Id": 3037274928, "LedgerId": 2265976208, "VoucherId": 999, "IsDeactivated": False},
+            3037274929: {"Id": 3037274929, "LedgerId": 2265976208, "VoucherId": None, "IsDeactivated": True},
+        }
         payload = self.workflow.get_unbooked_lines(
             ledger_id=2265976208,
             force_no_paging=True,
@@ -363,7 +416,7 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
             )
 
     def test_create_update_delete_line(self) -> None:
-        created = self.workflow.create_line({"LedgerId": 2265976208})
+        created = self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
         self.assertEqual(created["Id"], 3037274927)
 
         updated = self.workflow.update_line(3037274927, {"Description": "Updated"})
@@ -399,12 +452,185 @@ class VoucherDraftWorkflowTests(unittest.TestCase):
 
     def test_create_line_dto_ledger_overrides_selected_default(self) -> None:
         self.workflow.set_ledger_by_name("Finans")
-        created = self.workflow.create_line({"LedgerId": 2265976208})
+        created = self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
         self.assertEqual(created["LedgerId"], 2265976208)
 
     def test_create_line_requires_ledger_when_no_default_set(self) -> None:
         with self.assertRaises(VoucherDraftLedgerNotFoundError):
             self.workflow.create_line({"FiscalDateDays": 20544})
+
+    def test_create_line_switches_period_before_post_and_preserves_ledger_fields(self) -> None:
+        original = dict(self.finance.ledgers[2265976208])
+        dto = {"LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2025-12-31")}
+        self.workflow.create_line(dto)
+
+        self.assertEqual(self.finance.ledger_updates, [{**original, "FiscalPeriodId": 2025}])
+        self.assertEqual([event[0] for event in self.finance.events], ["period", "create", "update"])
+        self.assertTrue(all(event[2] == 2025 for event in self.finance.events))
+        self.assertEqual(dto, {"LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2025-12-31")})
+
+    def test_same_period_does_not_update_ledger(self) -> None:
+        self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.assertEqual(self.finance.ledger_updates, [])
+
+    def test_each_post_rechecks_period_even_if_another_caller_changed_it(self) -> None:
+        dto = {"LedgerId": 2265976208, "FiscalDateDays": 20544}
+        self.workflow.create_line(dto)
+        self.finance.ledgers[2265976208]["FiscalPeriodId"] = 2025
+        self.workflow.create_line(dto)
+        self.assertEqual([row["FiscalPeriodId"] for row in self.finance.ledger_updates], [2026])
+
+    def test_missing_fiscal_year_stops_before_any_write(self) -> None:
+        with self.assertRaisesRegex(FiscalPeriodNotFoundError, "needs to be set up in Xena"):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2027-01-01")})
+        self.assertEqual(self.finance.events, [])
+
+    def test_create_line_requires_explicit_integer_posting_date(self) -> None:
+        for value in (None, True, "2026-04-01"):
+            with self.subTest(value=value), self.assertRaisesRegex(VoucherDraftValidationError, "FiscalDateDays"):
+                self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": value})
+        self.assertEqual(self.finance.events, [])
+
+    def test_failed_period_switch_does_not_create_line(self) -> None:
+        self.workflow.update_ledger = Mock(side_effect=RuntimeError("Ledger cannot be updated"))
+        with self.assertRaisesRegex(RuntimeError, "cannot be updated"):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2025-01-01")})
+        self.assertEqual(self.finance.created_dtos, [])
+        self.assertIsNone(self.workflow._active_ledger_instance)
+
+    def test_unconfirmed_period_switch_does_not_create_line(self) -> None:
+        self.workflow.update_ledger = Mock(return_value=dict(self.finance.ledgers[2265976208]))
+        with self.assertRaisesRegex(VoucherDraftValidationError, "did not confirm"):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2025-01-01")})
+        self.assertEqual(self.finance.created_dtos, [])
+
+    def test_partial_update_uses_saved_line_date_and_ledger(self) -> None:
+        self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2025-12-31")})
+        self.finance.ledgers[2265976208]["FiscalPeriodId"] = 2026
+        self.workflow.set_ledger_by_name("Finans")
+        self.finance.events.clear()
+        self.workflow.update_line(3037274927, {"Description": "Updated"})
+        self.assertEqual(self.finance.events, [("period", 2265976208, 2025), ("update", 2265976208, 2025)])
+
+    def test_update_to_another_year_is_rejected_before_writes(self) -> None:
+        self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.finance.events.clear()
+        with self.assertRaisesRegex(VoucherDraftValidationError, "another fiscal period"):
+            self.workflow.update_line(3037274927, {"FiscalDateDays": to_fiscal_date_int("2025-12-31")})
+        self.assertEqual(self.finance.events, [])
+
+    def test_mixed_period_sequence_rejected_before_any_write(self) -> None:
+        with self.assertRaisesRegex(VoucherDraftValidationError, "same fiscal period"):
+            self.workflow.create_lines_convenience(
+                [{"date": day, "amount": 1} for day in ("2026-01-01", "2026-01-01", "2025-01-10")],
+                ledger_id=2265976208,
+            )
+        self.assertEqual(self.finance.events, [])
+
+    def test_later_missing_period_rejected_before_any_write(self) -> None:
+        with self.assertRaises(FiscalPeriodNotFoundError):
+            self.workflow.create_lines_convenience(
+                [{"date": day, "amount": 1} for day in ("2025-01-01", "2027-01-01")],
+                ledger_id=2265976208,
+            )
+        self.assertEqual(self.finance.events, [])
+
+    def test_separate_sequence_cannot_change_year_of_populated_ledger(self) -> None:
+        self.workflow.create_lines_convenience({"date": "2026-01-01", "amount": 1}, ledger_id=2265976208)
+        self.finance.events.clear()
+        with self.assertRaisesRegex(VoucherDraftValidationError, "another fiscal period"):
+            self.workflow.create_lines_convenience({"date": "2025-01-10", "amount": 1}, ledger_id=2265976208)
+        self.assertEqual(self.finance.events, [])
+
+    def test_existing_voucher_id_does_not_bypass_guard(self) -> None:
+        self.finance.lines[1] = {"Id": 1, "LedgerId": 2265976208,
+            "FiscalDateDays": to_fiscal_date_int("2025-01-10"), "VoucherId": 999}
+        with self.assertRaisesRegex(VoucherDraftValidationError, "another fiscal period"):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.assertEqual(self.finance.events, [])
+
+    def test_unreadable_existing_dates_fail_closed(self) -> None:
+        self.finance.lines[1] = {"Id": 1, "LedgerId": 2265976208}
+        with self.assertRaisesRegex(VoucherDraftValidationError, "FiscalDateDays"):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.assertEqual(self.finance.events, [])
+
+    def test_incomplete_listing_fails_closed(self) -> None:
+        self.workflow.get_lines = Mock(return_value={"Count": 2, "Entities": []})
+        with self.assertRaisesRegex(VoucherDraftValidationError, "all existing"):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.assertEqual(self.finance.events, [])
+
+    def test_same_fiscal_period_can_span_calendar_years(self) -> None:
+        self.finance.periods = [{"Id": 42,
+            "FiscalPeriodStartDays": to_fiscal_date_int("2025-07-01"),
+            "FiscalPeriodEndDays": to_fiscal_date_int("2026-06-30")}]
+        result = self.workflow.create_lines_convenience(
+            [{"date": day, "amount": amount} for day, amount in [("2025-12-31", 1), ("2026-01-01", -1)]],
+            ledger_id=2265976208,
+        )
+        self.assertEqual([r["FiscalPeriodId"] for r in result["Lines"]], [42, 42])
+        self.assertEqual(len(self.finance.ledger_updates), 1)
+
+    def test_two_periods_in_same_calendar_year_are_rejected(self) -> None:
+        self.finance.periods = [
+            {"Id": 1, "FiscalPeriodStartDays": to_fiscal_date_int("2026-01-01"),
+             "FiscalPeriodEndDays": to_fiscal_date_int("2026-06-30")},
+            {"Id": 2, "FiscalPeriodStartDays": to_fiscal_date_int("2026-07-01"),
+             "FiscalPeriodEndDays": to_fiscal_date_int("2026-12-31")},
+        ]
+        with self.assertRaisesRegex(VoucherDraftValidationError, "same fiscal period"):
+            self.workflow.create_lines_convenience(
+                [{"date": day, "amount": 1} for day in ("2026-01-01", "2026-07-01")],
+                ledger_id=2265976208,
+            )
+        self.assertEqual(self.finance.events, [])
+
+    def test_invalid_later_row_fails_before_period_change(self) -> None:
+        with self.assertRaises(ValueError):
+            self.workflow.create_lines_convenience(
+                [{"date": "2025-01-01", "amount": 1},
+                 {"date": "2025-01-02", "amount": "invalid"}], ledger_id=2265976208,
+            )
+        self.assertEqual(self.finance.events, [])
+
+    def test_deactivated_lines_do_not_block_empty_draft_year_selection(self) -> None:
+        self.finance.lines[1] = {"Id": 1, "LedgerId": 2265976208,
+            "FiscalDateDays": 20544, "IsDeactivated": True}
+        self.workflow.create_line({"LedgerId": 2265976208,
+            "FiscalDateDays": to_fiscal_date_int("2025-01-01")})
+        self.assertEqual(self.finance.ledger_updates[0]["FiscalPeriodId"], 2025)
+
+    def test_list_response_and_partial_update_detect_existing_conflict(self) -> None:
+        self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.workflow.get_lines = Mock(return_value=[
+            {"Id": 2, "LedgerId": 2265976208, "FiscalDateDays": to_fiscal_date_int("2025-01-01")}])
+        self.finance.events.clear()
+        with self.assertRaisesRegex(VoucherDraftValidationError, "another fiscal period"):
+            self.workflow.update_line(3037274927, {"Description": "No write"})
+        self.assertEqual(self.finance.events, [])
+
+    def test_listing_failure_blocks_all_writes(self) -> None:
+        for response in ({}, {"Entities": None}, {"Entities": [None]}):
+            self.workflow.get_lines = Mock(return_value=response)
+            with self.assertRaises(VoucherDraftValidationError):
+                self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.workflow.get_lines = Mock(side_effect=RuntimeError("Xena unavailable"))
+        with self.assertRaises(RuntimeError):
+            self.workflow.create_line({"LedgerId": 2265976208, "FiscalDateDays": 20544})
+        self.assertEqual(self.finance.events, [])
+
+    def test_convenience_missing_year_does_not_write_line(self) -> None:
+        with self.assertRaises(FiscalPeriodNotFoundError):
+            self.workflow.create_lines_convenience({"date": "2027-01-01", "amount": 100}, ledger_id=2265976208)
+        self.assertEqual(self.finance.events, [])
+
+    def test_convenience_explicit_voucher_number_is_preserved(self) -> None:
+        result = self.workflow.create_lines_convenience(
+            [{"date": "2026-01-01", "amount": 100}, {"date": "2026-01-02", "amount": 100}],
+            ledger_id=2265976208, voucher_number=12345,
+        )
+        self.assertEqual([row["Updated"]["VoucherNumber"] for row in result["Lines"]], [12345, 12345])
 
     def test_preview_summary(self) -> None:
         payload = self.workflow.preview_summary(2265976208, bookkeep_all=False, ledger_line_ids=[1, 2])
