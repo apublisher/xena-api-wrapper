@@ -21,6 +21,7 @@ from .bookkeeping import (
 	RegistrationInboxWorkflow,
 )
 from .document import DocumentError, DocumentWorkflow
+from .reconciliation import ReconciliationError, ReconciliationWorkflow
 from .partner import (
 	PartnerAddressDTO,
 	PartnerDTO,
@@ -99,6 +100,8 @@ __all__ = [
 	"RegistrationInboxWorkflow",
 	"DocumentError",
 	"DocumentWorkflow",
+	"ReconciliationError",
+	"ReconciliationWorkflow",
 	"PartnerAddressDTO",
 	"PartnerDTO",
 	"PartnerError",

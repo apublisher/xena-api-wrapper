@@ -12,6 +12,7 @@ Task-oriented Python wrappers built on top of `xena-client`.
 ## Runtime compatibility
 
 - Python: 3.10+
+- Client dependency: `xena-client>=0.3.0` (API-key and OAuth access-token support).
 - Primary runtime targets:
 	- Windows development environments
 	- Linux servers (for example Ubuntu 22)
@@ -54,6 +55,71 @@ report = wrapper.ledger_group_data.get_balance_sheet(
 	date_from="2026-01-01",
 	date_to="2026-01-31",
 )
+```
+
+## Bank import and reconciliation
+
+`wrapper.reconciliation` separates an explicit bank import from reads of the
+transactions already stored in Xena:
+
+```python
+wrapper = XenaApiWrapper.from_env(load_dotenv=True)
+reconciliation = wrapper.reconciliation
+
+# Read the bank contexts; each entity's Id is a bank_context_id, not a ledger tag Id.
+contexts = reconciliation.get_bank_contexts()
+for context in contexts["Entities"]:
+    postings = reconciliation.get_bank_transactions(
+        context["Id"], date_from="2026-01-01", date_to="2026-12-31",
+    )
+    for posting in postings["Entities"]:
+        print(posting["Id"], posting["FiscalDateDays"], posting["Amount"])
+
+# Explicitly ask Xena to fetch from ALL configured bank mappings in this fiscal.
+# This is never performed by either of the read methods.
+result = reconciliation.sync_bank_transactions()
+```
+
+Both read methods return the original `Count`/`Entities` envelope and preserve
+unmodeled response fields. `get_bank_contexts` excludes default/template entries
+(`include_defaults=False`): the API can return an entry with `Id=None` when
+defaults are included, which is not an existing bank context.
+`get_bank_transactions` reads stored history, not just
+the latest import. Date filters are optional and use the standard date conversion.
+`show_reconciled=True` is the default so the wrapper does not copy the UI's
+unreconciled-only filter. To request a page, pass `force_no_paging=False`,
+`page=0` (zero-based), and `page_size=100`; otherwise `ForceNoPaging` is requested.
+Use stable posting IDs to track previously processed records in the consuming app.
+
+`sync_bank_transactions` calls Xena's separate bank import service at
+`https://xena-services-bankimport-api-v1-production.codezoo.io/mappings/actions/update`.
+The observed UI uses a bearer token plus `x-fiscal-id`. The wrapper sends either
+the current bearer token or `XenaAPIKey`, with no bank credentials, cookies,
+automatic retries, redirects, or fallback between authentication modes.
+An API-key attempt is not a guarantee of support: HTTP failures propagate as
+`requests.HTTPError`, including status 401/403. A failure alone does not establish
+whether OAuth, different permissions, or a valid bank connection is required.
+Acceptance of consumer OAuth tokens by this service still needs a live test.
+The sync result is the service's JSON response, or `None` for an empty success
+body; it is not a count or list of newly imported transactions.
+
+Login, token replacement, scheduling, and tracking processed postings belong to
+the consuming app. Call `wrapper.set_access_token(new_token)` after externally
+renewing an OAuth token. Bank-token storage/renewal remains outside this wrapper.
+The sync timeout defaults to 60 seconds and can be overridden with `timeout=...`.
+A timeout leaves the server-side outcome unknown: do not automatically replay
+the import. Stored transaction reads remain independent of sync success.
+
+Live API-key check on 2026-11-17: context discovery succeeded, but the tested
+fiscal had no stored bank contexts. A single sync attempt returned HTTP 401 with
+`WWW-Authenticate: Bearer`. The test fiscal differed from the browser capture;
+non-empty history, live pagination, and consumer OAuth access remain to be
+verified. The generated read parameters match the published Xena Swagger.
+The next integration test can use an application-owned token:
+
+```python
+oauth_wrapper = XenaApiWrapper(access_token=access_token, fiscal_id=fiscal_id)
+oauth_wrapper.reconciliation.sync_bank_transactions()
 ```
 
 ## Document-based voucher registration (OAuth required)

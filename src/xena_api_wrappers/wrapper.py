@@ -27,6 +27,7 @@ from .workflows import (
     VoucherRegistrationWorkflow,
     RegistrationInboxWorkflow,
     DocumentWorkflow,
+    ReconciliationWorkflow,
 )
 
 
@@ -79,6 +80,7 @@ class XenaApiWrapper:
         self._voucher_registration_workflow: VoucherRegistrationWorkflow | None = None
         self._registration_inbox_workflow: RegistrationInboxWorkflow | None = None
         self._document_workflow: DocumentWorkflow | None = None
+        self._reconciliation_workflow: ReconciliationWorkflow | None = None
 
     @classmethod
     def from_env(
@@ -298,6 +300,12 @@ class XenaApiWrapper:
         if self._document_workflow is None:
             self._document_workflow = DocumentWorkflow(self._client, self.fiscal_id)
         return self._document_workflow
+
+    @property
+    def reconciliation(self) -> ReconciliationWorkflow:
+        if self._reconciliation_workflow is None:
+            self._reconciliation_workflow = ReconciliationWorkflow(self._client, self.fiscal_id)
+        return self._reconciliation_workflow
 
     @property
     def article_group(self) -> ArticleGroupWorkflow:
