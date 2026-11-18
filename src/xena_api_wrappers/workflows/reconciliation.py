@@ -62,6 +62,9 @@ class ReconciliationWorkflow:
                 headers=headers,
                 timeout=timeout,
                 allow_redirects=False,
+                # Check status before requests consumes a potentially truncated
+                # chunked error body. The context manager closes it on failure.
+                stream=True,
             ) as response:
                 response.raise_for_status()
                 if 300 <= response.status_code < 400:

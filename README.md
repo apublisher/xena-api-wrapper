@@ -996,3 +996,14 @@ The caller owns receipt identity, duplicate detection, concurrent claims, approv
 and reconciliation. A preview does not reserve the invoice balance or determine
 whether a surplus is interest, a fee or credit. No helper retries financial writes
 or infers income from an unexplained excess payment.
+
+### Bank update error handling (1.8.1)
+
+Bank update HTTP status is checked before reading the response body. A 4xx/5xx
+response raises `requests.HTTPError` with its response/status available, even if
+the server sends a truncated chunked error body. Failed responses are closed
+without consuming their bodies. This improves diagnostics; it does not resolve
+server-side failures or mean the bank update did not execute.
+
+Empty successful responses still return `None`. A truncated successful response
+still raises a transport error, never an empty success. Updates are not retried.

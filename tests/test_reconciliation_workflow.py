@@ -4,7 +4,7 @@ from datetime import date
 import json
 import unittest
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import requests
@@ -180,6 +180,66 @@ class ReconciliationTests(unittest.TestCase):
         with self.assertRaises(ReconciliationError):
             self.workflow.sync_bank_transactions()
         self.send.assert_not_called()
+
+
+class SyncResponseStreamingTests(unittest.TestCase):
+    """Exercise real requests.Session.send, including eager response consumption."""
+
+    def test_status_checked_before_broken_body_and_response_closed(self):
+        from urllib3.exceptions import ProtocolError
+        for status in (401, 403, 429, 500, 502):
+            with self.subTest(status=status):
+                raw = Mock(spec=["stream", "close", "release_conn"])
+                raw.stream.side_effect = ProtocolError("Response ended prematurely")
+                response = requests.Response()
+                response.status_code = status
+                response.headers["Transfer-Encoding"] = "chunked"
+                response.raw = raw
+
+                def send(request, **kwargs):
+                    response.request = request
+                    response.url = request.url
+                    return response
+
+                wrapper = XenaApiWrapper(access_token="test-token", fiscal_id="42")
+                with patch("requests.adapters.HTTPAdapter.send", side_effect=send) as adapter:
+                    with self.assertRaises(requests.HTTPError) as raised:
+                        wrapper.reconciliation.sync_bank_transactions()
+                self.assertIs(raised.exception.response, response)
+                self.assertEqual(raised.exception.response.status_code, status)
+                adapter.assert_called_once()
+                raw.stream.assert_not_called()
+                raw.close.assert_called_once()
+                raw.release_conn.assert_called_once()
+
+    def test_successful_status_with_broken_body_is_not_empty_success(self):
+        from urllib3.exceptions import ProtocolError
+        raw = Mock(spec=["stream", "close", "release_conn"])
+        raw.stream.side_effect = ProtocolError("Response ended prematurely")
+        response = requests.Response()
+        response.status_code = 200
+        response.raw = raw
+        wrapper = XenaApiWrapper(access_token="test-token", fiscal_id="42")
+        with patch("requests.adapters.HTTPAdapter.send", return_value=response) as adapter:
+            with self.assertRaises(requests.exceptions.ChunkedEncodingError):
+                wrapper.reconciliation.sync_bank_transactions()
+        adapter.assert_called_once()
+        raw.close.assert_called_once()
+        raw.release_conn.assert_called_once()
+
+    def test_empty_success_is_accepted_with_real_session_send(self):
+        for status in (200, 204):
+            with self.subTest(status=status):
+                raw = Mock(spec=["stream", "close", "release_conn"])
+                raw.stream.return_value = iter(())
+                response = requests.Response()
+                response.status_code = status
+                response.raw = raw
+                wrapper = XenaApiWrapper(access_token="test-token", fiscal_id="42")
+                with patch("requests.adapters.HTTPAdapter.send", return_value=response) as adapter:
+                    self.assertIsNone(wrapper.reconciliation.sync_bank_transactions())
+                adapter.assert_called_once()
+                raw.release_conn.assert_called_once()
 
 
 if __name__ == "__main__":
